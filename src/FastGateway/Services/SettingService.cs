@@ -1,5 +1,7 @@
-﻿using FastGateway.Dto;
+﻿using System.ComponentModel.DataAnnotations;
+using FastGateway.Dto;
 using FastGateway.Infrastructure;
+using FastGateway.Services.Statistics;
 
 namespace FastGateway.Services;
 
@@ -24,9 +26,15 @@ public static class SettingService
             .WithTags("设置");
 
         setting.MapPost("{key}",
-                async (SettingProvide settingProvide, SettingInput input) =>
+                async (SettingProvide settingProvide, ConfigurationService configService, SettingInput input) =>
                 {
+                    if (input.Key == LogRetention.SettingKey &&
+                        (!int.TryParse(input.Value, out var days) || !LogRetention.IsAllowed(days)))
+                        throw new ValidationException("日志保留天数仅支持 1、7、15、30 天");
+
                     await settingProvide.SetAsync(input.Key, input.Value);
+
+                    if (input.Key == LogRetention.SettingKey) LogRetention.Refresh(configService);
                 })
             .WithDescription("设置设置").WithDisplayName("设置设置")
             .WithTags("设置");

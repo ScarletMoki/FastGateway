@@ -12,6 +12,12 @@ public class ConfigurationService
     private readonly string _configPath;
     private readonly Lock _lockObject = new();
     private GatewayConfig _config;
+    private long _version;
+
+    /// <summary>
+    ///     配置版本号，任意变更后递增；供缓存派生数据的调用方做失效判断
+    /// </summary>
+    public long Version => Volatile.Read(ref _version);
 
     public ConfigurationService()
     {
@@ -46,6 +52,8 @@ public class ConfigurationService
                 _config = new GatewayConfig();
                 SaveConfig();
             }
+
+            Interlocked.Increment(ref _version);
         }
     }
 
@@ -53,6 +61,8 @@ public class ConfigurationService
     {
         lock (_lockObject)
         {
+            Interlocked.Increment(ref _version);
+
             try
             {
                 var json = JsonSerializer.Serialize(_config, ConfigJsonContext.Default.GatewayConfig);

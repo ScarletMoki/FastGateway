@@ -1,4 +1,5 @@
 using System.Text;
+using FastGateway.Services;
 using FastGateway.Services.Statistics;
 using Microsoft.Data.Sqlite;
 using static FastGateway.Services.Statistics.SqlRunner;
@@ -9,11 +10,13 @@ namespace FastGateway.BackgroundTask;
 ///     统计后台消费者：单读者批量消费采集通道，完成 geo/UA 富化后在单事务内
 ///     批量写入明细、分钟/小时聚合桶、维度聚合与每日唯一集合，并负责保留期清理。
 /// </summary>
-public sealed class StatisticsBackgroundService(ILogger<StatisticsBackgroundService> logger) : BackgroundService
+public sealed class StatisticsBackgroundService(
+    ILogger<StatisticsBackgroundService> logger,
+    ConfigurationService configurationService) : BackgroundService
 {
     private const int BatchSize = 500;
     private const int BatchDelayMs = 1000;
-    private const int RawRetentionDays = 7;
+    private const int RawRetentionDays = 7; // 仅用于一次性地理回填的时间窗口，清理保留期见 LogRetention
     private const int AggRetentionDays = 90;
     private const int DimKeyLimitPerBucket = 300;
     private const string DimOverflowKey = "__other__";
@@ -35,6 +38,7 @@ public sealed class StatisticsBackgroundService(ILogger<StatisticsBackgroundServ
     {
         StatisticsDb.Initialize(logger);
         GeoIpService.Initialize(logger);
+        LogRetention.Refresh(configurationService);
 
         if (!StatisticsDb.IsAvailable)
         {
@@ -574,7 +578,9 @@ public sealed class StatisticsBackgroundService(ILogger<StatisticsBackgroundServ
     {
         try
         {
-            var rawCutoff = now - RawRetentionDays * 86400L;
+            // 每轮清理重读配置，设置变更后最迟一小时生效
+            var rawRetentionDays = LogRetention.Refresh(configurationService);
+            var rawCutoff = now - rawRetentionDays * 86400L;
             var aggCutoff = now - AggRetentionDays * 86400L;
             var dayCutoff = LocalDay(aggCutoff);
 

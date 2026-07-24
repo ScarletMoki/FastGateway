@@ -145,13 +145,11 @@ public class Tunnel
 
         foreach (var proxy in Proxy)
         {
-            if (string.IsNullOrEmpty(proxy.Route))
-                throw new ArgumentException("Proxy Route cannot be null or empty.");
-
             if (string.IsNullOrEmpty(proxy.LocalRemote))
                 throw new ArgumentException("Proxy LocalRemote cannot be null or empty.");
 
-            if (!proxy.Route.StartsWith("/"))
+            // Route 允许为空（ToYarpOption 会回退到 catch-all），非空时必须以 '/' 开头
+            if (!string.IsNullOrWhiteSpace(proxy.Route) && !proxy.Route.StartsWith("/"))
                 throw new ArgumentException("Proxy Route must start with a '/' character.");
 
             if (!proxy.LocalRemote.StartsWith("http://") && !proxy.LocalRemote.StartsWith("https://") &&

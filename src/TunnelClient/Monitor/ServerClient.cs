@@ -51,9 +51,23 @@ public class ServerClient(
             var count = Interlocked.Increment(ref _tunnelCount);
             logger.LogWarning("新的隧道id，耗时：" + stopwatch.ElapsedMilliseconds + "ms" + " 当前数量：" + count);
 
-            var server2Target = serverTunnel.CopyToAsync(targetTunnel, cancellationToken);
-            var target2Server = targetTunnel.CopyToAsync(serverTunnel, cancellationToken);
-            var task = await Task.WhenAny(server2Target, target2Server);
+            using var copyCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var server2Target = serverTunnel.CopyToAsync(targetTunnel, copyCts.Token);
+            var target2Server = targetTunnel.CopyToAsync(serverTunnel, copyCts.Token);
+
+            await Task.WhenAny(server2Target, target2Server);
+
+            // 一方结束后取消另一方向，并在 await using 释放流之前等待两个拷贝都退出，
+            // 否则未完成的一方会在已释放的流上抛出无人观察的异常
+            copyCts.Cancel();
+            try
+            {
+                await Task.WhenAll(server2Target, target2Server);
+            }
+            catch
+            {
+                // 取消收尾产生的异常属预期，此处仅为观察任务结果
+            }
         }
         catch (OperationCanceledException operationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

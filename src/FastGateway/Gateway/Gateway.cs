@@ -810,10 +810,12 @@ public static class Gateway
                 var cluster = new ClusterConfig
                 {
                     ClusterId = domainName.Id,
+                    // destination key 必须在配置重载间保持稳定，否则 YARP 会当作删旧建新，
+                    // 清空健康检查状态与负载均衡计数
                     Destinations = new Dictionary<string, DestinationConfig>
                     {
                         {
-                            Guid.NewGuid().ToString("N"),
+                            "default",
                             config
                         }
                     },
@@ -828,10 +830,18 @@ public static class Gateway
 
             if (domainName.ServiceType == ServiceType.ServiceCluster)
             {
-                var destinations = domainName.UpStreams.Select(x => new DestinationConfig
+                var destinations = new Dictionary<string, DestinationConfig>(domainName.UpStreams.Count);
+                foreach (var upStream in domainName.UpStreams)
                 {
-                    Address = x.Service
-                }).ToDictionary(x => Guid.NewGuid().ToString("N"));
+                    // 以上游地址作稳定 key，重复地址追加序号兜底
+                    var key = destinations.ContainsKey(upStream.Service)
+                        ? $"{upStream.Service}#{destinations.Count}"
+                        : upStream.Service;
+                    destinations.Add(key, new DestinationConfig
+                    {
+                        Address = upStream.Service
+                    });
+                }
 
                 var cluster = new ClusterConfig
                 {
@@ -855,7 +865,7 @@ public static class Gateway
                     Destinations = new Dictionary<string, DestinationConfig>
                     {
                         {
-                            Guid.NewGuid().ToString("N"),
+                            "static",
                             StaticProxyDestination
                         }
                     },

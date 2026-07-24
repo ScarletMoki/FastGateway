@@ -8,36 +8,31 @@ namespace FastGateway.Services;
 
 public static class BlacklistAndWhitelistService
 {
-    private sealed record IpPolicySnapshot(string[] Whitelist, string[] Blacklist);
+    private sealed record IpPolicySnapshot(IpPolicyMatcher Whitelist, IpPolicyMatcher Blacklist);
 
-    private static IpPolicySnapshot _snapshot = new(Array.Empty<string>(), Array.Empty<string>());
+    private static IpPolicySnapshot _snapshot = new(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty);
 
     public static void RefreshCache(IEnumerable<BlacklistAndWhitelist> blacklistAndWhitelists)
     {
         if (blacklistAndWhitelists == null)
         {
-            Volatile.Write(ref _snapshot, new IpPolicySnapshot(Array.Empty<string>(), Array.Empty<string>()));
+            Volatile.Write(ref _snapshot, new IpPolicySnapshot(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty));
             return;
         }
 
         var whitelist = blacklistAndWhitelists
             .Where(x => x is { Enable: true, IsBlacklist: false })
             .SelectMany(x => x.Ips ?? [])
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .Where(x => !string.IsNullOrWhiteSpace(x));
 
         // 黑名单强制启用，不受 Enable 开关影响（安全防护不可关闭）
         var blacklist = blacklistAndWhitelists
             .Where(x => x.IsBlacklist)
             .SelectMany(x => x.Ips ?? [])
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .Where(x => !string.IsNullOrWhiteSpace(x));
 
-        Volatile.Write(ref _snapshot, new IpPolicySnapshot(whitelist, blacklist));
+        Volatile.Write(ref _snapshot,
+            new IpPolicySnapshot(IpPolicyMatcher.Build(whitelist), IpPolicyMatcher.Build(blacklist)));
     }
 
     public static void RefreshCache(ConfigurationService configService)
@@ -60,11 +55,10 @@ public static class BlacklistAndWhitelistService
 
         var snapshot = Volatile.Read(ref _snapshot);
 
-        if (enableWhitelist && snapshot.Whitelist.Length > 0)
-            return snapshot.Whitelist.Any(range => IpHelper.UnsafeCheckIpInIpRange(ip, range));
+        if (enableWhitelist && !snapshot.Whitelist.IsEmpty)
+            return snapshot.Whitelist.Contains(ip);
 
-        if (enableBlacklist && snapshot.Blacklist.Length > 0 &&
-            snapshot.Blacklist.Any(range => IpHelper.UnsafeCheckIpInIpRange(ip, range)))
+        if (enableBlacklist && snapshot.Blacklist.Contains(ip))
             return false;
 
         return true;
@@ -88,9 +82,9 @@ public static class BlacklistAndWhitelistService
 
             var snapshot = Volatile.Read(ref _snapshot);
 
-            if (enableWhitelist && snapshot.Whitelist.Length > 0)
+            if (enableWhitelist && !snapshot.Whitelist.IsEmpty)
             {
-                if (snapshot.Whitelist.Any(range => IpHelper.UnsafeCheckIpInIpRange(ip, range)))
+                if (snapshot.Whitelist.Contains(ip))
                 {
                     await next(context);
                     return;
@@ -101,8 +95,7 @@ public static class BlacklistAndWhitelistService
                 return;
             }
 
-            if (enableBlacklist && snapshot.Blacklist.Length > 0 &&
-                snapshot.Blacklist.Any(range => IpHelper.UnsafeCheckIpInIpRange(ip, range)))
+            if (enableBlacklist && snapshot.Blacklist.Contains(ip))
             {
                 context.Items[StatisticsCollector.BlockReasonKey] = (byte)BlockReason.Blacklist;
                 context.Response.StatusCode = 403;

@@ -24,6 +24,7 @@ public class Worker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var tunnel = Tunnel.GetTunnel();
+        tunnel.Validate();
 
         var monitorServer = new MonitorServer(_services);
 
@@ -34,7 +35,7 @@ public class Worker : BackgroundService
         {
             await MonitorServerAsync(monitorServer, serverClient, tunnel, stoppingToken);
             _logger.LogInformation("尝试重新连接到服务器...");
-            await Task.Delay(tunnel.ReconnectInterval, stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(tunnel.ReconnectInterval), stoppingToken);
             _logger.LogInformation("重新连接到服务器中...");
         }
     }

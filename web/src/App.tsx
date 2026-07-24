@@ -19,6 +19,7 @@ const FileStoragePage = lazy(() => import('./pages/filestorage/page'))
 const DashboardPage = lazy(() => import('./pages/dashboard/page'))
 const TunnelPage = lazy(() => import('./pages/tunnel/page'))
 const StreamForwardPage = lazy(() => import('./pages/stream-forward/page'))
+const SystemSettingPage = lazy(() => import('./pages/system-setting/page'))
 
 const router = createBrowserRouter([
   {
@@ -122,6 +123,12 @@ const router = createBrowserRouter([
             path: 'about',
             element: <Suspense fallback={<Loading></Loading>}>
               <AboutPage />
+            </Suspense>
+          },
+          {
+            path: 'setting',
+            element: <Suspense fallback={<Loading></Loading>}>
+              <SystemSettingPage />
             </Suspense>
           },
           {

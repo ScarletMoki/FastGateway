@@ -19,6 +19,7 @@ const PAGE_TITLES: Record<string, string> = {
     "security/threats": "威胁检测",
     "security/logs": "拦截日志",
     filestorage: "文件管理",
+    setting: "系统设置",
     about: "系统信息",
 };
 

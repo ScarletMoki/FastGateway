@@ -198,17 +198,16 @@ public class MonitorServer(IServiceProvider serviceProvider)
     /// </summary>
     public async Task RegisterNodeAsync(Tunnel tunnel, CancellationToken cancellationToken)
     {
-        using var httpClient = new HttpClient();
-
         var serverUri =
             new Uri($"{tunnel.ServerUrl.TrimEnd('/')}/internal/gateway/Server/register?token=" + tunnel.Token);
 
-        var str = new StringContent(JsonSerializer.Serialize(tunnel, AppContext.Default.Options), Encoding.UTF8,
-            "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, serverUri)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(tunnel, AppContext.Default.Options), Encoding.UTF8,
+                "application/json")
+        };
 
-        // 这里我们使用PostAsync方法，因为我们需要发送一个POST请求来注册节点
-        var response =
-            await httpClient.PostAsync(serverUri, str, cancellationToken);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {

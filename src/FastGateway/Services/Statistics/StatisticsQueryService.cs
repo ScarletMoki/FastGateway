@@ -29,6 +29,23 @@ public static class StatisticsQueryService
     private static long TimeZoneOffsetSeconds =>
         (long)TimeZoneInfo.Local.GetUtcOffset(DateTime.Now).TotalSeconds;
 
+    /// <summary>
+    ///     范围跨度超过明细保留期时，request_log 已被清理无法给出完整数据，
+    ///     需退回每日唯一集合（保留期可配置，见 <see cref="LogRetention" />）
+    /// </summary>
+    private static bool ExceedsRawRetention(string? range)
+    {
+        var rangeDays = range switch
+        {
+            "1h" => 0,
+            "7d" => 7,
+            "30d" => 30,
+            _ => 1
+        };
+
+        return rangeDays > LogRetention.RawDays;
+    }
+
     public static StatisticsOverviewDto GetOverview(string? range, string? host)
     {
         var info = ResolveRange(range);
@@ -90,7 +107,7 @@ public static class StatisticsQueryService
 
         var hostCondition = hostFilter.Length == 0 ? string.Empty : " AND host = @hostFilter";
 
-        if (range == "30d")
+        if (range == "30d" || ExceedsRawRetention(range))
         {
             // 超过明细保留期，用每日唯一集合（仍为精确值）
             var dayStart = LocalDay(info.StartTs);

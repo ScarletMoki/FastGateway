@@ -19,13 +19,16 @@ namespace FastGateway.Middleware;
 
 public sealed class ClusterRequestFailoverMiddleware
 {
-    private static readonly string[] AllowedMethods = [HttpMethods.Get, HttpMethods.Head, HttpMethods.Options];
     private static readonly ConcurrentDictionary<int, HttpMessageInvoker> Clients = new();
 
     private readonly RequestDelegate _next;
     private readonly string _serverId;
     private readonly string _gatewayVersion;
     private readonly ILogger<ClusterRequestFailoverMiddleware> _logger;
+
+    // 按配置版本缓存的路由表：条目预排序、路径预归一化、transformer 预创建，
+    // 避免每请求线性扫描配置 + LINQ 路由重匹配
+    private FailoverRouteTable? _routeTable;
 
     public ClusterRequestFailoverMiddleware(
         RequestDelegate next,
@@ -46,87 +49,69 @@ public sealed class ClusterRequestFailoverMiddleware
         IHttpForwarder httpForwarder,
         IDestinationHealthUpdater destinationHealthUpdater)
     {
-        if (!ShouldHandleRequest(context))
+        var table = GetRouteTable(configurationService);
+        if (!table.Enabled || !ShouldHandleRequest(context))
         {
             await _next(context);
             return;
         }
 
-        var server = configurationService.GetServer(_serverId);
-        if (server is null || !server.EnableRequestFailover)
+        var entry = table.Match(context.Request.Host.Host, context.Request.Path);
+        if (entry is null)
         {
             await _next(context);
             return;
         }
 
-        var domainName = FindMatchedDomain(configurationService.GetDomainNamesByServerId(_serverId), context);
-        if (domainName is null)
+        if (!proxyStateLookup.TryGetCluster(entry.DomainName.Id, out var cluster) || cluster is null)
         {
             await _next(context);
             return;
         }
 
-        if (!proxyStateLookup.TryGetCluster(domainName.Id, out var cluster) || cluster is null)
-        {
-            await _next(context);
-            return;
-        }
-
-        var candidates = GetCandidateDestinations(cluster).ToArray();
+        var candidates = GetCandidateDestinations(cluster);
         if (candidates.Length <= 1)
         {
             await _next(context);
             return;
         }
 
-        var connectTimeoutMs = server.FailoverConnectTimeoutMs > 0 ? server.FailoverConnectTimeoutMs : 150;
-        var budgetMs = server.FailoverBudgetMs >= connectTimeoutMs ? server.FailoverBudgetMs : 500;
-        var requestTimeoutSeconds = server.Timeout > 0 ? server.Timeout : 900;
-        var reactivationPeriod = GetReactivationPeriod(domainName);
-        var attemptedDestinationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var stopwatch = Stopwatch.StartNew();
+        Shuffle(candidates);
+
+        var httpClient = GetOrCreateClient(table.ConnectTimeoutMs);
+        var attempts = 0;
+        var startTimestamp = Stopwatch.GetTimestamp();
         ForwarderError lastError = ForwarderError.None;
         Exception? lastException = null;
 
-        foreach (var destination in Shuffle(candidates))
+        foreach (var destination in candidates)
         {
-            if (!attemptedDestinationIds.Add(destination.DestinationId))
-            {
-                continue;
-            }
-
-            if (stopwatch.ElapsedMilliseconds > budgetMs && attemptedDestinationIds.Count > 1)
+            if (attempts > 0 && Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds > table.BudgetMs)
             {
                 break;
             }
 
+            attempts++;
             context.Features.Set<IForwarderErrorFeature?>(null);
-            var requestConfig = new ForwarderRequestConfig
-            {
-                ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
-            };
-            var transformer = new ClusterFailoverTransformer(domainName, server, _gatewayVersion);
-            var httpClient = GetOrCreateClient(connectTimeoutMs);
-            var destinationPrefix = destination.Model.Config.Address;
 
             var error = await httpForwarder.SendAsync(
                 context,
-                destinationPrefix,
+                destination.Model.Config.Address,
                 httpClient,
-                requestConfig,
-                transformer,
+                table.RequestConfig,
+                entry.Transformer,
                 context.RequestAborted);
 
             if (error == ForwarderError.None)
             {
-                if (attemptedDestinationIds.Count > 1)
+                if (attempts > 1)
                 {
                     _logger.LogInformation(
                         "集群请求故障转移成功 ClusterId={ClusterId} DestinationId={DestinationId} Attempts={Attempts} ElapsedMs={ElapsedMs}",
                         cluster.ClusterId,
                         destination.DestinationId,
-                        attemptedDestinationIds.Count,
-                        stopwatch.ElapsedMilliseconds);
+                        attempts,
+                        (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
                 }
                 return;
             }
@@ -137,15 +122,16 @@ public sealed class ClusterRequestFailoverMiddleware
 
             if (IsRetriableTransportError(error, lastException) && !context.Response.HasStarted)
             {
-                destinationHealthUpdater.SetPassive(cluster, destination, DestinationHealth.Unhealthy, reactivationPeriod);
+                destinationHealthUpdater.SetPassive(cluster, destination, DestinationHealth.Unhealthy,
+                    entry.ReactivationPeriod);
                 _logger.LogWarning(
                     lastException,
                     "集群请求故障转移，目标切换 ClusterId={ClusterId} DestinationId={DestinationId} Error={Error} Attempt={Attempt} ElapsedMs={ElapsedMs}",
                     cluster.ClusterId,
                     destination.DestinationId,
                     error,
-                    attemptedDestinationIds.Count,
-                    stopwatch.ElapsedMilliseconds);
+                    attempts,
+                    (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
                 continue;
             }
 
@@ -167,9 +153,28 @@ public sealed class ClusterRequestFailoverMiddleware
         }
     }
 
+    private FailoverRouteTable GetRouteTable(ConfigurationService configurationService)
+    {
+        var table = Volatile.Read(ref _routeTable);
+        var version = configurationService.Version;
+        if (table is not null && table.Version == version)
+        {
+            return table;
+        }
+
+        table = FailoverRouteTable.Build(
+            version,
+            configurationService.GetServer(_serverId),
+            configurationService.GetDomainNamesByServerId(_serverId),
+            _gatewayVersion);
+        Volatile.Write(ref _routeTable, table);
+        return table;
+    }
+
     private static bool ShouldHandleRequest(HttpContext context)
     {
-        if (!AllowedMethods.Contains(context.Request.Method, StringComparer.OrdinalIgnoreCase))
+        var method = context.Request.Method;
+        if (!HttpMethods.IsGet(method) && !HttpMethods.IsHead(method) && !HttpMethods.IsOptions(method))
         {
             return false;
         }
@@ -184,35 +189,17 @@ public sealed class ClusterRequestFailoverMiddleware
             return false;
         }
 
-        if (context.Request.Headers.Accept.ToString().Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+        var accept = context.Request.Headers.Accept;
+        for (var i = 0; i < accept.Count; i++)
         {
-            return false;
+            var value = accept[i];
+            if (value is not null && value.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
         }
 
         return true;
-    }
-
-    private static DomainName? FindMatchedDomain(IEnumerable<DomainName> domainNames, HttpContext context)
-    {
-        var requestPath = context.Request.Path;
-        var requestHost = context.Request.Host.Host;
-
-        return domainNames
-            .Where(x => x is { Enable: true, ServiceType: ServiceType.ServiceCluster })
-            .Where(x => MatchHost(x, requestHost) && MatchPath(x, requestPath))
-            .OrderByDescending(GetHostPriority)
-            .ThenByDescending(x => NormalizeRoutePath(x.Path).Length)
-            .FirstOrDefault();
-    }
-
-    private static int GetHostPriority(DomainName domainName)
-    {
-        if (domainName.Domains is not { Length: > 0 })
-        {
-            return 0;
-        }
-
-        return domainName.Domains.Any(x => !x.Contains('*')) ? 2 : 1;
     }
 
     private static bool MatchHost(DomainName domainName, string requestHost)
@@ -249,17 +236,6 @@ public sealed class ClusterRequestFailoverMiddleware
         return false;
     }
 
-    private static bool MatchPath(DomainName domainName, PathString requestPath)
-    {
-        var routePath = NormalizeRoutePath(domainName.Path);
-        if (routePath == "/")
-        {
-            return true;
-        }
-
-        return requestPath.StartsWithSegments(routePath, out _);
-    }
-
     private static string NormalizeRoutePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || path == "/")
@@ -270,10 +246,19 @@ public sealed class ClusterRequestFailoverMiddleware
         return "/" + path.Trim().Trim('/');
     }
 
-    private static IEnumerable<DestinationState> GetCandidateDestinations(ClusterState cluster)
+    private static DestinationState[] GetCandidateDestinations(ClusterState cluster)
     {
-        return cluster.Destinations.Values
-            .Where(x => GetEffectiveHealth(x.Health) != DestinationHealth.Unhealthy);
+        var destinations = cluster.Destinations.Values;
+        var result = new List<DestinationState>(cluster.Destinations.Count);
+        foreach (var destination in destinations)
+        {
+            if (GetEffectiveHealth(destination.Health) != DestinationHealth.Unhealthy)
+            {
+                result.Add(destination);
+            }
+        }
+
+        return result.ToArray();
     }
 
     private static DestinationHealth GetEffectiveHealth(DestinationHealthState healthState)
@@ -291,20 +276,14 @@ public sealed class ClusterRequestFailoverMiddleware
         return DestinationHealth.Healthy;
     }
 
-    private static IEnumerable<DestinationState> Shuffle(IReadOnlyCollection<DestinationState> destinations)
+    private static void Shuffle(DestinationState[] destinations)
     {
-        return destinations.OrderBy(_ => Random.Shared.Next());
-    }
-
-    private static TimeSpan GetReactivationPeriod(DomainName domainName)
-    {
-        var seconds = domainName.HealthCheckIntervalSeconds;
-        if (seconds <= 0)
+        // 就地 Fisher-Yates，替代 OrderBy(Random) 的排序与键分配
+        for (var i = destinations.Length - 1; i > 0; i--)
         {
-            seconds = 10;
+            var j = Random.Shared.Next(i + 1);
+            (destinations[i], destinations[j]) = (destinations[j], destinations[i]);
         }
-
-        return TimeSpan.FromSeconds(seconds);
     }
 
     private static bool IsRetriableTransportError(ForwarderError error, Exception? exception)
@@ -342,7 +321,136 @@ public sealed class ClusterRequestFailoverMiddleware
         });
     }
 
-    private sealed class ClusterFailoverTransformer(DomainName domainName, Server server, string gatewayVersion)
+    private sealed class FailoverRouteTable
+    {
+        private static readonly FailoverEntry[] EmptyEntries = [];
+
+        public required long Version { get; init; }
+        public required bool Enabled { get; init; }
+        public required FailoverEntry[] Entries { get; init; }
+        public required ForwarderRequestConfig RequestConfig { get; init; }
+        public required int ConnectTimeoutMs { get; init; }
+        public required int BudgetMs { get; init; }
+
+        public static FailoverRouteTable Build(
+            long version,
+            Server? server,
+            DomainName[] domainNames,
+            string gatewayVersion)
+        {
+            if (server is null || !server.EnableRequestFailover)
+            {
+                return CreateDisabled(version);
+            }
+
+            var entries = new List<FailoverEntry>();
+            foreach (var domainName in domainNames)
+            {
+                if (domainName is not { Enable: true, ServiceType: ServiceType.ServiceCluster })
+                {
+                    continue;
+                }
+
+                var routePath = NormalizeRoutePath(domainName.Path);
+                var hasWildcardHost = false;
+                var hasExactHost = false;
+                if (domainName.Domains is { Length: > 0 })
+                {
+                    foreach (var host in domainName.Domains)
+                    {
+                        if (host.Contains('*')) hasWildcardHost = true;
+                        else hasExactHost = true;
+                    }
+                }
+
+                var reactivationSeconds = domainName.HealthCheckIntervalSeconds;
+                if (reactivationSeconds <= 0) reactivationSeconds = 10;
+
+                entries.Add(new FailoverEntry
+                {
+                    DomainName = domainName,
+                    RoutePath = routePath,
+                    HostPriority = hasExactHost ? 2 : hasWildcardHost ? 1 : 0,
+                    ReactivationPeriod = TimeSpan.FromSeconds(reactivationSeconds),
+                    Transformer = new ClusterFailoverTransformer(
+                        routePath,
+                        hasWildcardHost || server.CopyRequestHost,
+                        gatewayVersion)
+                });
+            }
+
+            if (entries.Count == 0)
+            {
+                return CreateDisabled(version);
+            }
+
+            // 预排序：精确域名优先于泛域名，路径越长越优先；匹配时取第一个命中即可
+            entries.Sort((a, b) =>
+            {
+                var byHost = b.HostPriority.CompareTo(a.HostPriority);
+                return byHost != 0 ? byHost : b.RoutePath.Length.CompareTo(a.RoutePath.Length);
+            });
+
+            var connectTimeoutMs = server.FailoverConnectTimeoutMs > 0 ? server.FailoverConnectTimeoutMs : 150;
+            var budgetMs = server.FailoverBudgetMs >= connectTimeoutMs ? server.FailoverBudgetMs : 500;
+            var requestTimeoutSeconds = server.Timeout > 0 ? server.Timeout : 900;
+
+            return new FailoverRouteTable
+            {
+                Version = version,
+                Enabled = true,
+                Entries = entries.ToArray(),
+                RequestConfig = new ForwarderRequestConfig
+                {
+                    ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
+                },
+                ConnectTimeoutMs = connectTimeoutMs,
+                BudgetMs = budgetMs
+            };
+        }
+
+        private static FailoverRouteTable CreateDisabled(long version)
+        {
+            return new FailoverRouteTable
+            {
+                Version = version,
+                Enabled = false,
+                Entries = EmptyEntries,
+                RequestConfig = ForwarderRequestConfig.Empty,
+                ConnectTimeoutMs = 150,
+                BudgetMs = 500
+            };
+        }
+
+        public FailoverEntry? Match(string requestHost, PathString requestPath)
+        {
+            foreach (var entry in Entries)
+            {
+                if (MatchHost(entry.DomainName, requestHost) && entry.MatchPath(requestPath))
+                {
+                    return entry;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    private sealed class FailoverEntry
+    {
+        public required DomainName DomainName { get; init; }
+        public required string RoutePath { get; init; }
+        public required int HostPriority { get; init; }
+        public required TimeSpan ReactivationPeriod { get; init; }
+        public required ClusterFailoverTransformer Transformer { get; init; }
+
+        public bool MatchPath(PathString requestPath)
+        {
+            return RoutePath == "/" || requestPath.StartsWithSegments(RoutePath, out _);
+        }
+    }
+
+    private sealed class ClusterFailoverTransformer(string routePath, bool copyRequestHost, string gatewayVersion)
         : HttpTransformer
     {
         public override async ValueTask TransformRequestAsync(
@@ -353,16 +461,16 @@ public sealed class ClusterRequestFailoverMiddleware
         {
             await base.TransformRequestAsync(httpContext, proxyRequest, destinationPrefix, cancellationToken);
 
-            var routePath = NormalizeRoutePath(domainName.Path);
             var forwardPath = httpContext.Request.Path;
             if (routePath != "/" && httpContext.Request.Path.StartsWithSegments(routePath, out var remaining))
             {
                 forwardPath = remaining.HasValue ? remaining : new PathString("/");
             }
 
-            proxyRequest.RequestUri = RequestUtilities.MakeDestinationAddress(destinationPrefix, forwardPath, httpContext.Request.QueryString);
+            proxyRequest.RequestUri =
+                RequestUtilities.MakeDestinationAddress(destinationPrefix, forwardPath, httpContext.Request.QueryString);
 
-            if (domainName.Domains.Any(x => x.Contains('*')) || server.CopyRequestHost)
+            if (copyRequestHost)
             {
                 proxyRequest.Headers.Host = httpContext.Request.Host.Value;
             }

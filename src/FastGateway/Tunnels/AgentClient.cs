@@ -5,7 +5,6 @@ namespace FastGateway.Tunnels;
 
 public class AgentClient
 {
-    private readonly Lazy<HttpMessageInvoker> _httpClientLazy;
     private readonly HttpContext _httpContext;
     private readonly AgentTunnelFactory _httpTunnelFactory;
     public readonly AgentClientConnection Connection;
@@ -46,8 +45,6 @@ public class AgentClient
         if (!_disposed)
         {
             _disposed = true;
-
-            if (_httpClientLazy.IsValueCreated) _httpClientLazy.Value.Dispose();
 
             await Connection.DisposeAsync();
         }

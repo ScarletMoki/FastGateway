@@ -12,6 +12,7 @@ import {
   Network,
   Radar,
   ScrollText,
+  Settings,
   ShieldCheck,
   Waypoints,
 } from "lucide-react"
@@ -78,6 +79,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "系统",
     items: [
+      { key: "setting", title: "系统设置", to: "/setting", icon: Settings },
       { key: "about", title: "系统信息", to: "/about", icon: Info },
     ],
   },
