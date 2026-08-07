@@ -197,3 +197,62 @@ public class SaveContentRequest
     /// </summary>
     public string? Content { get; set; }
 }
+
+/// <summary>
+///     合并上传分片请求
+/// </summary>
+public class MergeChunksRequest
+{
+    /// <summary>
+    ///     目标目录
+    /// </summary>
+    [Required(ErrorMessage = "路径不能为空")]
+    public string Path { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     盘符
+    /// </summary>
+    [Required(ErrorMessage = "盘符不能为空")]
+    public string Drives { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     最终文件名，必须是纯文件名（不含路径分隔符）
+    /// </summary>
+    [Required(ErrorMessage = "文件名不能为空")]
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     上传任务 ID，对应分片暂存目录名
+    /// </summary>
+    [Required(ErrorMessage = "上传ID不能为空")]
+    public string UploadId { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     分片总数
+    /// </summary>
+    public int Total { get; set; }
+}
+
+/// <summary>
+///     放弃上传请求，用于清理残留分片
+/// </summary>
+public class AbortUploadRequest
+{
+    /// <summary>
+    ///     目标目录
+    /// </summary>
+    [Required(ErrorMessage = "路径不能为空")]
+    public string Path { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     盘符
+    /// </summary>
+    [Required(ErrorMessage = "盘符不能为空")]
+    public string Drives { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     上传任务 ID
+    /// </summary>
+    [Required(ErrorMessage = "上传ID不能为空")]
+    public string UploadId { get; set; } = string.Empty;
+}

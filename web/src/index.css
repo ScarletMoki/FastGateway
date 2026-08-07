@@ -179,3 +179,18 @@ html {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--ring);
 }
+
+/*
+ * MotionConfig reducedMotion="user" 只管得到 motion 组件，管不到 Tailwind 的
+ * transition-* / animate-* 工具类（侧边栏折叠、spinner、骨架屏脉冲等）。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

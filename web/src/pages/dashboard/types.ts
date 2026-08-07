@@ -87,3 +87,10 @@ export function formatCount(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(2)}k`;
   return value.toLocaleString();
 }
+
+/** 给 AnimatedNumber 用的格式化器，与 formatCount 同签名 (n: number) => string */
+export const formatPercent2 = (value: number) => `${value.toFixed(2)}%`;
+
+export const formatMs = (value: number) => `${Math.round(value)} ms`;
+
+export const formatInt = (value: number) => Math.round(value).toLocaleString();

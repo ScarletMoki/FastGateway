@@ -379,6 +379,88 @@
   color: var(--destructive);
 }
 
+/* 剪切后的源节点：粘贴前给一个「待移动」的视觉提示 */
+.fs-tree-cut {
+  opacity: 0.45;
+}
+
+/* 拖拽上传时的目标目录高亮 */
+.fs-drop-active {
+  outline: 2px dashed var(--ring);
+  outline-offset: -2px;
+  background: color-mix(in oklab, var(--ring) 12%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+/* 上传队列：左侧面板底部固定条。.fs-panel 是 flex column，flex:none 不与树抢空间 */
+.fs-upload-queue {
+  flex: none;
+  border-top: 1px solid var(--border);
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fs-upload-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.fs-upload-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fs-upload-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fs-upload-status-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.fs-upload-ok {
+  color: #16a34a;
+}
+
+.fs-upload-fail {
+  color: var(--destructive);
+}
+
+.fs-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+
+.fs-upload-meta {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fs-upload-error {
+  color: var(--destructive);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
 @keyframes fs-pulse {
   0% {
     opacity: 0.55;

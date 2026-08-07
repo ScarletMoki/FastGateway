@@ -72,7 +72,12 @@ export const uploadFile = (
   return post(`/api/v1/filestorage/upload?${params}`, { body: formData });
 };
 
-export const downloadFile = (path: string, drives: string): Promise<Blob> => {
+/**
+ * 后端固定返回 application/octet-stream，utils/fetch.ts 会给出 Blob。
+ * 但校验失败时 ResultFilter 会把 ValidationException 转成 200 + JSON，
+ * 那种情况下拿到的是 ApiResponse 对象 —— 调用方必须 instanceof Blob 判断。
+ */
+export const downloadFile = (path: string, drives: string): Promise<Blob | ApiResponse> => {
   requireNonEmpty('路径', path);
   requireNonEmpty('盘符', drives);
   const params = new URLSearchParams({ path, drives });
@@ -80,33 +85,62 @@ export const downloadFile = (path: string, drives: string): Promise<Blob> => {
 };
 
 export const uploadFileChunk = (
-  file: File,
+  chunk: Blob,
   path: string,
   drives: string,
+  uploadId: string,
   index: number,
   total: number,
+  signal?: AbortSignal,
 ): Promise<ApiResponse> => {
-  if (!file) throw new Error('文件不能为空');
+  if (!chunk) throw new Error('文件不能为空');
   requireNonEmpty('路径', path);
   requireNonEmpty('盘符', drives);
+  requireNonEmpty('上传ID', uploadId);
+  // Minimal API 的简单类型只从 route/query 绑定，塞进 FormData 是拿不到的，
+  // 所以这些参数走 query，body 只放分片本体
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('path', path);
-  formData.append('drives', drives);
-  formData.append('index', index.toString());
-  formData.append('total', total.toString());
-  return post('/api/v1/filestorage/upload/chunk', { body: formData });
+  formData.append('file', chunk, 'chunk');
+  const params = new URLSearchParams({
+    path,
+    drives,
+    uploadId,
+    index: String(index),
+    total: String(total),
+  });
+  return post(`/api/v1/filestorage/upload/chunk?${params}`, { body: formData, signal });
 };
 
 export const mergeFileChunks = (
   path: string,
   drives: string,
   fileName: string,
+  uploadId: string,
+  total: number,
 ): Promise<ApiResponse> => {
   requireNonEmpty('路径', path);
   requireNonEmpty('盘符', drives);
   requireNonEmpty('文件名', fileName);
-  return postJson('/api/v1/filestorage/upload/merge', { path, drives, fileName });
+  requireNonEmpty('上传ID', uploadId);
+  return postJson('/api/v1/filestorage/upload/merge', {
+    path,
+    drives,
+    fileName,
+    uploadId,
+    total,
+  });
+};
+
+/** 取消或失败后清理服务端残留分片 */
+export const abortUpload = (
+  path: string,
+  drives: string,
+  uploadId: string,
+): Promise<ApiResponse> => {
+  requireNonEmpty('路径', path);
+  requireNonEmpty('盘符', drives);
+  requireNonEmpty('上传ID', uploadId);
+  return postJson('/api/v1/filestorage/upload/abort', { path, drives, uploadId });
 };
 
 export const unzipFiles = (path: string, drives: string): Promise<ApiResponse> => {

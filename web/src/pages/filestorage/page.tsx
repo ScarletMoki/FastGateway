@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  ClipboardPaste,
+  Copy,
+  Download,
   File,
   FileArchive,
   FileAudio,
@@ -14,10 +17,13 @@ import {
   FolderPlus,
   HardDrive,
   Loader2,
+  PackageOpen,
   PencilLine,
   Plus,
   RefreshCw,
+  Scissors,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -25,7 +31,7 @@ import {
   oneDark,
   oneLight,
 } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Item, Menu, Separator, useContextMenu } from 'react-contexify';
+import { Item, Menu, Separator, Submenu, useContextMenu } from 'react-contexify';
 import 'react-contexify/dist/ReactContexify.css';
 
 import { Button } from '@/components/ui/button';
@@ -60,17 +66,24 @@ import {
 } from '@/components/animate-ui/components/radix/files';
 import { useTheme } from '@/components/theme-provider';
 import {
+  copyFile,
   createDirectory,
   createFile,
+  createZipFromPath,
   deleteFile,
   getDirectory,
   getDrives,
   getFileContent,
+  moveFile,
   renameFile,
   saveFileContent,
+  unzipFiles,
   type DirectoryListing,
   type DriveInfo,
 } from '@/services/FileStorageService';
+import { UploadQueue } from './features/UploadQueue';
+import { useUpload } from './hooks/useUpload';
+import { downloadToDisk } from './utils/download';
 
 import './index.css';
 
@@ -291,6 +304,19 @@ function joinPath(directory: string, name: string): string {
   return `${directory}${separator}${name}`;
 }
 
+/** 右键菜单 Item / 谓词收到的参数，props 由 showTreeMenu 传入 */
+type MenuArgs = { props?: { node?: FsNode | null } };
+
+const errMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+const isZipNode = (node?: FsNode | null) =>
+  node?.type === 'file' && /\.zip$/i.test(node.name);
+
+const hiddenUnlessFile = ({ props }: MenuArgs) => props?.node?.type !== 'file';
+const hiddenForDriveOrBlank = ({ props }: MenuArgs) =>
+  !props?.node || props.node.type === 'drive';
+
 function isPathEqualOrUnder(path: string, prefix: string): boolean {
   if (path === prefix) return true;
   return path.startsWith(`${prefix}\\`) || path.startsWith(`${prefix}/`);
@@ -316,6 +342,18 @@ type FsNode = {
   error?: string;
   children?: FsNode[];
 };
+
+/**
+ * 剪贴板存整个节点快照而不是路径字符串：粘贴时 name/drive/type/path 四个字段都要用，
+ * 存快照可以避免源节点被树刷新替换后拿到脏引用。
+ */
+type ClipboardEntry = {
+  mode: 'copy' | 'cut';
+  node: FsNode;
+};
+
+/** 当前正在进行的阻塞型压缩操作，用于禁用菜单项 */
+type BusyOp = 'zip' | 'unzip' | null;
 
 type OpenTab = {
   id: string;
@@ -426,6 +464,20 @@ const FileStoragePage: React.FC = () => {
   const [renaming, setRenaming] = useState(false);
   const [renameTarget, setRenameTarget] = useState<FsNode | null>(null);
   const [renameValue, setRenameValue] = useState('');
+
+  const [clipboard, setClipboard] = useState<ClipboardEntry | null>(null);
+  const [pasting, setPasting] = useState(false);
+
+  const [zipOpen, setZipOpen] = useState(false);
+  const [zipTarget, setZipTarget] = useState<FsNode | null>(null);
+  const [zipName, setZipName] = useState('');
+  const [busyOp, setBusyOp] = useState<BusyOp>(null);
+
+  const [dropTargetPath, setDropTargetPath] = useState<string>('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 点「上传文件…」时记下目标目录，file input 的 onChange 里再取用 */
+  const pendingUploadDirRef = useRef<{ path: string; drive: string } | null>(null);
 
   const refreshDrives = useCallback(async () => {
     setLoadingDrives(true);
@@ -830,6 +882,227 @@ const FileStoragePage: React.FC = () => {
     [tabs, refreshDirectoryNode],
   );
 
+  /** 把任意节点归一成「目标目录」：文件取其父目录，空节点回退到当前选中 */
+  const resolveDirectory = useCallback(
+    (node?: FsNode | null): { path: string; drive: string } | null => {
+      if (!node) return targetDirectory;
+      if (node.type === 'file') return { path: dirname(node.path), drive: node.drive };
+      return { path: node.path, drive: node.drive };
+    },
+    [targetDirectory],
+  );
+
+  const { tasks: uploadTasks, enqueue, cancelTask, retryTask, clearFinished } = useUpload({
+    onFileDone: (task) => refreshDirectoryNode(task.targetPath),
+  });
+
+  const pickFilesFor = useCallback((dir: { path: string; drive: string } | null) => {
+    if (!dir) {
+      toast.error('请先选择一个目录');
+      return;
+    }
+    pendingUploadDirRef.current = dir;
+    fileInputRef.current?.click();
+  }, []);
+
+  const onFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const dir = pendingUploadDirRef.current ?? targetDirectory;
+      const files = Array.from(event.target.files ?? []);
+      // 清空 value，否则连续选同一个文件不会再触发 onChange
+      event.target.value = '';
+      pendingUploadDirRef.current = null;
+      if (!dir || files.length === 0) return;
+      enqueue(files, dir.path, dir.drive);
+    },
+    [enqueue, targetDirectory],
+  );
+
+  const handleDownload = useCallback(async (node: FsNode) => {
+    if (node.type !== 'file') return;
+    try {
+      await downloadToDisk(node.path, node.drive, node.name);
+    } catch (error) {
+      toast.error(`下载失败: ${errMessage(error)}`);
+    }
+  }, []);
+
+  const openZipDialog = useCallback((node: FsNode) => {
+    if (!node || node.type === 'drive') return;
+    setZipTarget(node);
+    setZipName(
+      node.type === 'directory'
+        ? `${node.name}.zip`
+        : `${node.name.replace(/\.[^.]+$/, '') || node.name}.zip`,
+    );
+    setZipOpen(true);
+  }, []);
+
+  const handleCreateZip = useCallback(async () => {
+    if (!zipTarget || busyOp) return;
+
+    const name = zipName.trim();
+    if (!name) {
+      toast.error('请输入 ZIP 文件名');
+      return;
+    }
+
+    const finalName = /\.zip$/i.test(name) ? name : `${name}.zip`;
+    // 后端把 zip 写在源路径的同级目录，且已存在时静默 File.Delete —— 先问一句
+    const outputDir = dirname(zipTarget.path);
+
+    try {
+      const listing = await getDirectory(outputDir, zipTarget.drive);
+      const exists = (listing?.data?.files ?? []).some((f) => f.name === finalName);
+      if (exists && !window.confirm(`“${finalName}” 已存在，将被覆盖，继续吗？`)) return;
+    } catch {
+      // 读不到目录就直接试，让后端报错
+    }
+
+    setBusyOp('zip');
+    setZipOpen(false);
+    // 后端 ZipFile.CreateFromDirectory 同步阻塞，时长不可预知，只能给不确定态
+    const toastId = toast.loading(`正在打包 “${zipTarget.name}”，大目录可能需要较长时间…`);
+    try {
+      const res = await createZipFromPath(zipTarget.path, zipTarget.drive, finalName);
+      if (!res?.success) throw new Error(res?.message || '打包失败');
+      toast.success(`已生成 ${finalName}`, { id: toastId });
+      refreshDirectoryNode(outputDir);
+    } catch (error) {
+      toast.error(`打包失败: ${errMessage(error)}`, { id: toastId });
+    } finally {
+      setBusyOp(null);
+    }
+  }, [zipTarget, zipName, busyOp, refreshDirectoryNode]);
+
+  const handleUnzip = useCallback(
+    async (node: FsNode) => {
+      if (!node || node.type !== 'file' || busyOp) return;
+
+      const outputName = node.name.replace(/\.zip$/i, '');
+      // 后端解压前会 Directory.Delete(extractDirectory, true)，这是破坏性的，必须点名
+      const ok = window.confirm(
+        `将解压到 “${outputName}” 目录。\n如果该目录已存在，其中的全部内容会被删除后覆盖。是否继续？`,
+      );
+      if (!ok) return;
+
+      const parent = dirname(node.path);
+      setBusyOp('unzip');
+      const toastId = toast.loading(`正在解压 “${node.name}”…`);
+      try {
+        const res = await unzipFiles(node.path, node.drive);
+        if (!res?.success) throw new Error(res?.message || '解压失败');
+        toast.success(`已解压到 ${outputName}`, { id: toastId });
+        refreshDirectoryNode(parent);
+      } catch (error) {
+        toast.error(`解压失败: ${errMessage(error)}`, { id: toastId });
+      } finally {
+        setBusyOp(null);
+      }
+    },
+    [busyOp, refreshDirectoryNode],
+  );
+
+  const handlePaste = useCallback(
+    async (dir: { path: string; drive: string } | null) => {
+      if (!clipboard || !dir || pasting) return;
+      const { mode, node: source } = clipboard;
+
+      // MoveFileRequest/CopyFileRequest 只有一个 Drives 字段（源目标共用），
+      // 且 Windows 下 Directory.Move 跨卷必抛
+      if (source.drive !== dir.drive) {
+        toast.error('暂不支持跨盘符的复制/移动');
+        return;
+      }
+
+      // 后端 TargetPath 是含文件名的完整路径，不是目标目录
+      const targetPath = joinPath(dir.path, source.name);
+
+      if (targetPath === source.path) {
+        if (mode === 'cut') {
+          setClipboard(null);
+          return;
+        }
+        toast.error('目标目录与源目录相同，请先重命名或换个目录');
+        return;
+      }
+
+      // Directory.Move('/a', '/a/b') 会抛异常，CopyDirectory 会产出错乱结果
+      if (source.type === 'directory' && isPathEqualOrUnder(dir.path, source.path)) {
+        toast.error('不能把文件夹粘贴到它自己或其子目录中');
+        return;
+      }
+
+      // 后端行为不一致：File.Copy 静默覆盖，File.Move / Directory.Move 目标已存在会抛，
+      // 所以冲突必须前端问清楚
+      let conflict = false;
+      try {
+        const listing = await getDirectory(dir.path, dir.drive);
+        const entries = [
+          ...(listing?.data?.directories ?? []),
+          ...(listing?.data?.files ?? []),
+        ];
+        conflict = entries.some((x) => x.name === source.name);
+      } catch {
+        // 读不到就交给后端报错
+      }
+
+      if (conflict) {
+        const label = source.type === 'directory' ? '文件夹' : '文件';
+        if (!window.confirm(`目标目录已存在同名${label} “${source.name}”，覆盖吗？`)) return;
+        // 剪切 + 覆盖：Move 不带 overwrite 语义，只能先删目标。复制不需要（Copy 自带覆盖）
+        if (mode === 'cut') {
+          const del = await deleteFile(targetPath, dir.drive);
+          if (!del?.success) {
+            toast.error(del?.message || '覆盖失败');
+            return;
+          }
+        }
+      }
+
+      setPasting(true);
+      try {
+        const res =
+          mode === 'copy'
+            ? await copyFile(source.path, targetPath, dir.drive)
+            : await moveFile(source.path, targetPath, dir.drive);
+        if (!res?.success) throw new Error(res?.message || '粘贴失败');
+
+        if (mode === 'cut') {
+          // 与 handleRename 相同的路径重写：打开的 tab / 展开状态 / 选中态都要跟着搬
+          setTabs((prev) =>
+            prev.map((t) =>
+              isPathEqualOrUnder(t.path, source.path)
+                ? {
+                    ...t,
+                    id: replacePathPrefix(t.path, source.path, targetPath),
+                    path: replacePathPrefix(t.path, source.path, targetPath),
+                  }
+                : t,
+            ),
+          );
+          setActiveTab((current) => replacePathPrefix(current, source.path, targetPath));
+          setOpenFolders((prev) =>
+            prev.map((p) => replacePathPrefix(p, source.path, targetPath)),
+          );
+          setSelectedPath((prev) => replacePathPrefix(prev, source.path, targetPath));
+
+          refreshDirectoryNode(dirname(source.path));
+          setClipboard(null);
+        }
+
+        refreshDirectoryNode(dir.path);
+        toast.success(mode === 'copy' ? '复制成功' : '移动成功');
+        // 复制保留剪贴板，可连续粘贴到多个目录
+      } catch (error) {
+        toast.error(`粘贴失败: ${errMessage(error)}`);
+      } finally {
+        setPasting(false);
+      }
+    },
+    [clipboard, pasting, refreshDirectoryNode],
+  );
+
   const onTreeBlankContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
@@ -847,6 +1120,91 @@ const FileStoragePage: React.FC = () => {
       (showTreeMenu as any)({ event: event.nativeEvent, props: { node } });
     },
     [showTreeMenu],
+  );
+
+  // 拖歪一点浏览器就会直接导航到 file://，全局兜住
+  useEffect(() => {
+    const prevent = (event: DragEvent) => event.preventDefault();
+    window.addEventListener('dragover', prevent);
+    window.addEventListener('drop', prevent);
+    return () => {
+      window.removeEventListener('dragover', prevent);
+      window.removeEventListener('drop', prevent);
+    };
+  }, []);
+
+  /** 只认从系统拖进来的文件。将来做树内拖拽时用自定义 MIME 就能天然区分 */
+  const isLocalFileDrag = (event: React.DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes('Files');
+
+  const dropFilesInto = useCallback(
+    (event: React.DragEvent, dir: { path: string; drive: string } | null) => {
+      // DataTransfer 在回调返回后就被清空，items 必须同步读完
+      const items = Array.from(event.dataTransfer.items ?? []);
+      const entries = items.map((item) => item.webkitGetAsEntry?.() ?? null);
+      const files = Array.from(event.dataTransfer.files ?? []);
+
+      // 拖文件夹时 files 里会混进一个 size 异常、type 为空的伪 File，传上去是垃圾
+      const hasDirectory = entries.some((entry) => entry?.isDirectory);
+      const uploadable =
+        entries.length === files.length
+          ? files.filter((_, i) => entries[i]?.isFile !== false)
+          : files;
+
+      if (hasDirectory) toast.error('暂不支持拖拽文件夹上传，请先压缩为 zip');
+      if (uploadable.length === 0 || !dir) return;
+
+      enqueue(uploadable, dir.path, dir.drive);
+    },
+    [enqueue],
+  );
+
+  const onNodeDragOver = useCallback((event: React.DragEvent, node: FsNode) => {
+    if (node.type === 'file') return; // 冒泡给父目录
+    if (!isLocalFileDrag(event)) return;
+    event.preventDefault(); // 不 preventDefault 则 drop 根本不会触发
+    event.stopPropagation(); // 鼠标下最内层的目录赢
+    event.dataTransfer.dropEffect = 'copy';
+    setDropTargetPath((prev) => (prev === node.path ? prev : node.path));
+  }, []);
+
+  const onNodeDragLeave = useCallback((event: React.DragEvent, node: FsNode) => {
+    // 不用 enter/leave 计数：嵌套下极易配平失败把高亮卡住
+    const next = event.relatedTarget as Node | null;
+    if (next && event.currentTarget.contains(next)) return;
+    setDropTargetPath((prev) => (prev === node.path ? '' : prev));
+  }, []);
+
+  const onNodeDrop = useCallback(
+    (event: React.DragEvent, node: FsNode) => {
+      if (node.type === 'file') return;
+      if (!isLocalFileDrag(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setDropTargetPath('');
+
+      setSelectedPath(node.path);
+      setOpenFolders((prev) => (prev.includes(node.path) ? prev : [...prev, node.path]));
+      dropFilesInto(event, { path: node.path, drive: node.drive });
+    },
+    [dropFilesInto],
+  );
+
+  // 面板空白处兜底。节点 handler 已 stopPropagation，所以只有拖到空白才会走到这里
+  const onPanelDragOver = useCallback((event: React.DragEvent) => {
+    if (!isLocalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const onPanelDrop = useCallback(
+    (event: React.DragEvent) => {
+      if (!isLocalFileDrag(event)) return;
+      event.preventDefault();
+      setDropTargetPath('');
+      dropFilesInto(event, targetDirectory);
+    },
+    [dropFilesInto, targetDirectory],
   );
 
   const handleCreateFolder = useCallback(async () => {
@@ -965,6 +1323,9 @@ const FileStoragePage: React.FC = () => {
       return <div className="fs-tree-status">暂无可用盘符</div>;
     }
 
+    const isCutSource = (node: FsNode) =>
+      clipboard?.mode === 'cut' && isPathEqualOrUnder(node.path, clipboard.node.path);
+
     const renderNodes = (nodes: FsNode[]) =>
       nodes.map((node) => {
         if (node.type === 'file') {
@@ -973,7 +1334,13 @@ const FileStoragePage: React.FC = () => {
           return (
             <div
               key={node.path}
-              className={`fs-tree-clickable ${isSelected ? 'fs-tree-selected' : ''}`}
+              className={[
+                'fs-tree-clickable',
+                isSelected && 'fs-tree-selected',
+                isCutSource(node) && 'fs-tree-cut',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               role="button"
               tabIndex={0}
               onClick={() => openFile(node)}
@@ -995,10 +1362,20 @@ const FileStoragePage: React.FC = () => {
 
         return (
           <FolderItem key={node.path} value={node.path}>
+            {/* 这个 div 只包 header 行、不包 FolderContent，所以 drop 高亮不会渗到子节点 */}
             <div
-              className={isSelected ? 'fs-tree-selected' : undefined}
+              className={[
+                isSelected && 'fs-tree-selected',
+                dropTargetPath === node.path && 'fs-drop-active',
+                isCutSource(node) && 'fs-tree-cut',
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined}
               onClickCapture={() => setSelectedPath(node.path)}
               onContextMenu={(e) => onNodeContextMenu(e, node)}
+              onDragOver={(e) => onNodeDragOver(e, node)}
+              onDragLeave={(e) => onNodeDragLeave(e, node)}
+              onDrop={(e) => onNodeDrop(e, node)}
             >
               <FolderTrigger>{node.name}</FolderTrigger>
             </div>
@@ -1048,6 +1425,11 @@ const FileStoragePage: React.FC = () => {
     openFile,
     loadFolderChildren,
     onNodeContextMenu,
+    clipboard,
+    dropTargetPath,
+    onNodeDragOver,
+    onNodeDragLeave,
+    onNodeDrop,
   ]);
 
   return (
@@ -1090,6 +1472,19 @@ const FileStoragePage: React.FC = () => {
             <Button
               variant="ghost"
               size="icon"
+              onClick={() => pickFilesFor(targetDirectory)}
+              disabled={!targetDirectory}
+              aria-label="上传文件"
+              title={
+                targetDirectory ? `上传到 ${targetDirectory.path}` : '请先选择一个目录'
+              }
+            >
+              <Upload />
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={refreshDrives}
               disabled={loadingDrives}
               aria-label="刷新"
@@ -1101,9 +1496,26 @@ const FileStoragePage: React.FC = () => {
         <div
           className="fs-panel-body custom-scrollbar"
           onContextMenu={onTreeBlankContextMenu}
+          onDragOver={onPanelDragOver}
+          onDrop={onPanelDrop}
         >
           {treeBody}
         </div>
+
+        <UploadQueue
+          tasks={uploadTasks}
+          onCancel={cancelTask}
+          onRetry={retryTask}
+          onClear={clearFinished}
+        />
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={onFileInputChange}
+        />
       </aside>
 
       <main className="fs-panel fs-viewer">
@@ -1241,13 +1653,16 @@ const FileStoragePage: React.FC = () => {
         </div>
       </main>
 
+      {/*
+        菜单项按右键的上下文用 hidden 谓词收敛，而不是 13 项全平铺：
+        空白/盘符 3 行、目录 9 行、普通文件 11 行、zip 文件 12 行。
+      */}
       <Menu id={TREE_CONTEXT_MENU_ID} className="fs-context-menu">
         <Item
-          disabled={({ props }: any) => props?.node?.type !== 'file'}
-          onClick={({ props }: any) => {
+          hidden={hiddenUnlessFile}
+          onClick={({ props }: MenuArgs) => {
             const node = props?.node as FsNode | undefined;
-            if (!node || node.type !== 'file') return;
-            void openFile(node);
+            if (node?.type === 'file') void openFile(node);
           }}
         >
           <div className="fs-context-menu-row">
@@ -1256,40 +1671,133 @@ const FileStoragePage: React.FC = () => {
           </div>
         </Item>
 
-        <Separator />
-
         <Item
-          disabled={!targetDirectory}
-          onClick={() => {
-            openCreateFolderForSelection();
-          }}
-        >
-          <div className="fs-context-menu-row">
-            <FolderPlus className="fs-context-menu-icon" />
-            新建文件夹
-          </div>
-        </Item>
-
-        <Item
-          disabled={!targetDirectory}
-          onClick={() => {
-            openCreateFileForSelection();
-          }}
-        >
-          <div className="fs-context-menu-row">
-            <FilePlus className="fs-context-menu-icon" />
-            新建文件
-          </div>
-        </Item>
-
-        <Separator />
-
-        <Item
-          disabled={({ props }: any) => !props?.node || props?.node?.type === 'drive'}
-          onClick={({ props }: any) => {
+          hidden={hiddenUnlessFile}
+          onClick={({ props }: MenuArgs) => {
             const node = props?.node as FsNode | undefined;
-            if (!node) return;
-            openRenameForNode(node);
+            if (node?.type === 'file') void handleDownload(node);
+          }}
+        >
+          <div className="fs-context-menu-row">
+            <Download className="fs-context-menu-icon" />
+            下载
+          </div>
+        </Item>
+
+        <Separator hidden={hiddenUnlessFile} />
+
+        <Submenu
+          label={
+            <div className="fs-context-menu-row">
+              <Plus className="fs-context-menu-icon" />
+              新建
+            </div>
+          }
+          disabled={!targetDirectory}
+        >
+          <Item onClick={() => openCreateFolderForSelection()}>
+            <div className="fs-context-menu-row">
+              <FolderPlus className="fs-context-menu-icon" />
+              新建文件夹
+            </div>
+          </Item>
+          <Item onClick={() => openCreateFileForSelection()}>
+            <div className="fs-context-menu-row">
+              <FilePlus className="fs-context-menu-icon" />
+              新建文件
+            </div>
+          </Item>
+          <Separator />
+          <Item
+            onClick={({ props }: MenuArgs) => pickFilesFor(resolveDirectory(props?.node))}
+          >
+            <div className="fs-context-menu-row">
+              <Upload className="fs-context-menu-icon" />
+              上传文件…
+            </div>
+          </Item>
+        </Submenu>
+
+        <Separator />
+
+        <Item
+          hidden={hiddenForDriveOrBlank}
+          onClick={({ props }: MenuArgs) => {
+            const node = props?.node as FsNode | undefined;
+            if (node) setClipboard({ mode: 'copy', node });
+          }}
+        >
+          <div className="fs-context-menu-row">
+            <Copy className="fs-context-menu-icon" />
+            复制
+          </div>
+        </Item>
+
+        <Item
+          hidden={hiddenForDriveOrBlank}
+          onClick={({ props }: MenuArgs) => {
+            const node = props?.node as FsNode | undefined;
+            if (node) setClipboard({ mode: 'cut', node });
+          }}
+        >
+          <div className="fs-context-menu-row">
+            <Scissors className="fs-context-menu-icon" />
+            剪切
+          </div>
+        </Item>
+
+        <Item
+          disabled={({ props }: MenuArgs) => {
+            if (!clipboard || pasting) return true;
+            const dir = resolveDirectory(props?.node);
+            // 跨盘符直接禁用：后端 DTO 只有一个 Drives 字段
+            return !dir || dir.drive !== clipboard.node.drive;
+          }}
+          onClick={({ props }: MenuArgs) => void handlePaste(resolveDirectory(props?.node))}
+        >
+          <div className="fs-context-menu-row">
+            <ClipboardPaste className="fs-context-menu-icon" />
+            {clipboard ? `粘贴 “${clipboard.node.name}”` : '粘贴'}
+          </div>
+        </Item>
+
+        <Separator hidden={hiddenForDriveOrBlank} />
+
+        <Item
+          hidden={hiddenForDriveOrBlank}
+          disabled={() => busyOp !== null}
+          onClick={({ props }: MenuArgs) => {
+            const node = props?.node as FsNode | undefined;
+            if (node) openZipDialog(node);
+          }}
+        >
+          <div className="fs-context-menu-row">
+            <FileArchive className="fs-context-menu-icon" />
+            打包为 ZIP…
+          </div>
+        </Item>
+
+        <Item
+          hidden={({ props }: MenuArgs) => !isZipNode(props?.node)}
+          disabled={() => busyOp !== null}
+          onClick={({ props }: MenuArgs) => {
+            const node = props?.node as FsNode | undefined;
+            if (node) void handleUnzip(node);
+          }}
+        >
+          <div className="fs-context-menu-row">
+            <PackageOpen className="fs-context-menu-icon" />
+            解压到当前目录
+          </div>
+        </Item>
+
+        <Separator hidden={hiddenForDriveOrBlank} />
+
+        <Item
+          hidden={hiddenForDriveOrBlank}
+          onClick={({ props }: MenuArgs) => {
+            const node = props?.node as FsNode | undefined;
+            if (node) openRenameForNode(node);
           }}
         >
           <div className="fs-context-menu-row">
@@ -1299,11 +1807,10 @@ const FileStoragePage: React.FC = () => {
         </Item>
 
         <Item
-          disabled={({ props }: any) => !props?.node || props?.node?.type === 'drive'}
-          onClick={({ props }: any) => {
+          hidden={hiddenForDriveOrBlank}
+          onClick={({ props }: MenuArgs) => {
             const node = props?.node as FsNode | undefined;
-            if (!node) return;
-            void handleDelete(node);
+            if (node) void handleDelete(node);
           }}
         >
           <div className="fs-context-menu-row fs-context-menu-danger">
@@ -1315,7 +1822,7 @@ const FileStoragePage: React.FC = () => {
         <Separator />
 
         <Item
-          onClick={({ props }: any) => {
+          onClick={({ props }: MenuArgs) => {
             const node = props?.node as FsNode | undefined;
             if (!node) {
               refreshDrives();
@@ -1388,6 +1895,47 @@ const FileStoragePage: React.FC = () => {
             </Button>
             <Button onClick={handleRename} disabled={renaming}>
               {renaming ? '处理中...' : '确定'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={zipOpen}
+        onOpenChange={(open) => {
+          setZipOpen(open);
+          if (!open) {
+            setZipTarget(null);
+            setZipName('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>打包为 ZIP</DialogTitle>
+            <DialogDescription title={zipTarget?.path}>
+              {/* 后端把 zip 写在源路径的同级目录 */}
+              源：{zipTarget?.path ?? '未选择'}
+              <br />
+              输出到：{zipTarget ? dirname(zipTarget.path) : '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={zipName}
+              onChange={(e) => setZipName(e.target.value)}
+              placeholder="请输入 ZIP 文件名"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateZip();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setZipOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreateZip} disabled={busyOp !== null}>
+              {busyOp === 'zip' ? '打包中...' : '开始打包'}
             </Button>
           </DialogFooter>
         </DialogContent>

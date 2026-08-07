@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Activity, MonitorSmartphone, PieChart, ShieldAlert } from "lucide-react";
+import { Reveal, Stagger, StaggerItem, SwapFade } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AreaChart } from "@/components/ui/area-chart";
@@ -15,6 +16,8 @@ import { useIsDark } from "../../hooks/useIsDark";
 import { useDashboardStore } from "../../store";
 import {
   formatCount,
+  formatMs,
+  formatPercent2,
   formatSeriesTime,
   type RankingItem,
   type StatisticsOverview,
@@ -92,26 +95,30 @@ export default function TrafficTab() {
   );
 
   return (
-    <div className="space-y-4">
+    // stagger 的粒度是「卡片」而不是「卡片内的格子」：下面两张 Card 的分隔线是
+    // 每个 StatTile 自己的 border-left，逐格错峰会让 12 条分隔线参差错动
+    <Stagger className="space-y-4">
       {/* 指标条 + 实时QPS */}
-      <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
+      <StaggerItem className="grid gap-4 xl:grid-cols-[1fr_280px]">
         <div className="space-y-4">
           <Card className="border-border/60 bg-card/80 shadow-sm">
             <CardContent className="grid grid-cols-2 divide-y divide-border/50 p-0 sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-6 xl:divide-x">
-              <StatTile label="请求次数" value={formatCount(overview?.requests ?? 0)} loading={loading} />
-              <StatTile label="访问次数（PV）" value={formatCount(overview?.pageViews ?? 0)} loading={loading} />
-              <StatTile label="独立访客（UV）" value={formatCount(overview?.uniqueVisitors ?? 0)} loading={loading} />
-              <StatTile label="独立 IP" value={formatCount(overview?.uniqueIps ?? 0)} loading={loading} />
+              <StatTile label="请求次数" value={overview?.requests ?? 0} format={formatCount} loading={loading} />
+              <StatTile label="访问次数（PV）" value={overview?.pageViews ?? 0} format={formatCount} loading={loading} />
+              <StatTile label="独立访客（UV）" value={overview?.uniqueVisitors ?? 0} format={formatCount} loading={loading} />
+              <StatTile label="独立 IP" value={overview?.uniqueIps ?? 0} format={formatCount} loading={loading} />
               <StatTile
                 label="拦截次数"
-                value={formatCount(overview?.blocked ?? 0)}
+                value={overview?.blocked ?? 0}
+                format={formatCount}
                 sub={`黑名单 ${formatCount(overview?.blocked403 ?? 0)} · 限流 ${formatCount(overview?.blocked429 ?? 0)}`}
                 tone="danger"
                 loading={loading}
               />
               <StatTile
                 label="攻击 IP"
-                value={formatCount(overview?.attackIps ?? 0)}
+                value={overview?.attackIps ?? 0}
+                format={formatCount}
                 sub={overview?.abnormalIpsLive ? `实时异常 ${overview.abnormalIpsLive}` : undefined}
                 tone="danger"
                 loading={loading}
@@ -121,23 +128,27 @@ export default function TrafficTab() {
 
           <Card className="border-border/60 bg-card/80 shadow-sm">
             <CardContent className="grid grid-cols-2 divide-y divide-border/50 p-0 sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-6 xl:divide-x">
-              <StatTile label="4xx 错误数" value={formatCount(overview?.error4xx ?? 0)} tone="warning" loading={loading} />
-              <StatTile label="4xx 错误率" value={`${(overview?.error4xxRate ?? 0).toFixed(2)}%`} tone="warning" loading={loading} />
-              <StatTile label="拦截率" value={`${(overview?.blockRate ?? 0).toFixed(2)}%`} loading={loading} />
-              <StatTile label="平均耗时" value={`${overview?.avgElapsedMs ?? 0} ms`} loading={loading} />
-              <StatTile label="5xx 错误数" value={formatCount(overview?.error5xx ?? 0)} tone="danger" loading={loading} />
-              <StatTile label="5xx 错误率" value={`${(overview?.error5xxRate ?? 0).toFixed(2)}%`} tone="danger" loading={loading} />
+              <StatTile label="4xx 错误数" value={overview?.error4xx ?? 0} format={formatCount} tone="warning" loading={loading} />
+              <StatTile label="4xx 错误率" value={overview?.error4xxRate ?? 0} format={formatPercent2} round={2} tone="warning" loading={loading} />
+              <StatTile label="拦截率" value={overview?.blockRate ?? 0} format={formatPercent2} round={2} loading={loading} />
+              <StatTile label="平均耗时" value={overview?.avgElapsedMs ?? 0} format={formatMs} loading={loading} />
+              <StatTile label="5xx 错误数" value={overview?.error5xx ?? 0} format={formatCount} tone="danger" loading={loading} />
+              <StatTile label="5xx 错误率" value={overview?.error5xxRate ?? 0} format={formatPercent2} round={2} tone="danger" loading={loading} />
             </CardContent>
           </Card>
         </div>
 
         <QpsSparkCard />
-      </div>
+      </StaggerItem>
 
       {/* 主体：地理 + 趋势 */}
-      <div className="grid gap-4 xl:grid-cols-3">
+      <StaggerItem className="grid gap-4 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
-          <GeoCard />
+          {/* y={0} 纯淡入：里面是 echarts-gl 的 WebGL canvas，位移会让整个
+              合成层每帧重定位，而 opacity 对已是合成层的 canvas 几乎免费 */}
+          <Reveal y={0}>
+            <GeoCard />
+          </Reveal>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Card className="border-border/60 bg-card/80 shadow-sm">
@@ -196,10 +207,12 @@ export default function TrafficTab() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="h-[180px] pt-0">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : (
+            <CardContent className="relative h-[180px] pt-0">
+              <SwapFade
+                loading={loading}
+                skeleton={<Skeleton className="h-full w-full" />}
+                className="h-full"
+              >
                 <AreaChart
                   data={chartData}
                   categories={["requests"]}
@@ -209,7 +222,7 @@ export default function TrafficTab() {
                   valueFormatter={formatCount}
                   markPeak
                 />
-              )}
+              </SwapFade>
             </CardContent>
           </Card>
 
@@ -225,10 +238,12 @@ export default function TrafficTab() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="h-[180px] pt-0">
-              {loading ? (
-                <Skeleton className="h-full w-full" />
-              ) : (
+            <CardContent className="relative h-[180px] pt-0">
+              <SwapFade
+                loading={loading}
+                skeleton={<Skeleton className="h-full w-full" />}
+                className="h-full"
+              >
                 <AreaChart
                   data={chartData}
                   categories={["blocked"]}
@@ -238,14 +253,14 @@ export default function TrafficTab() {
                   valueFormatter={formatCount}
                   markPeak
                 />
-              )}
+              </SwapFade>
             </CardContent>
           </Card>
         </div>
-      </div>
+      </StaggerItem>
 
       {/* 来源与受访排行 */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <StaggerItem className="grid gap-4 md:grid-cols-2">
         {(
           [
             { type: "referer_host", title: "外部来源域名" },
@@ -254,7 +269,10 @@ export default function TrafficTab() {
             { type: "path", title: "受访页面" },
           ] as Array<{ type: RankingType; title: string }>
         ).map(({ type, title }) => (
-          <Card key={type} className="border-border/60 bg-card/80 shadow-sm">
+          // y={0}：父级 StaggerItem 已经负责位移，这里再来一次会叠成 16px。
+          // hoverLift 只给不含图表的卡 —— scale 会让 recharts 在缩放中间态记错初始尺寸
+          <StaggerItem key={type} y={0} hoverLift className="rounded-xl">
+          <Card className="border-border/60 bg-card/80 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">{title}</CardTitle>
               <Button
@@ -275,8 +293,9 @@ export default function TrafficTab() {
               />
             </CardContent>
           </Card>
+          </StaggerItem>
         ))}
-      </div>
+      </StaggerItem>
 
       {dialog && (
         <RankListDialog
@@ -288,6 +307,6 @@ export default function TrafficTab() {
           host={host}
         />
       )}
-    </div>
+    </Stagger>
   );
 }

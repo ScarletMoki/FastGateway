@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Globe2 } from "lucide-react";
+import { ProgressBar, Stagger, StaggerItem } from "@/components/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { getStatisticsGeo } from "@/services/StatisticsService";
@@ -129,25 +130,23 @@ export function GeoCard() {
             ) : topItems.length === 0 ? (
               <div className="py-4 text-center text-xs text-muted-foreground">暂无数据</div>
             ) : (
-              <div className="space-y-2">
-                {topItems.map((item) => (
-                  <div key={item.name}>
+              <Stagger className="space-y-2">
+                {topItems.map((item, i) => (
+                  <StaggerItem key={item.name}>
                     <div className="flex items-baseline justify-between gap-2 text-xs">
                       <span className="min-w-0 truncate text-foreground/90">{item.name}</span>
                       <span className="shrink-0 font-semibold tabular-nums">{formatCount(valueOf(item))}</span>
                     </div>
-                    <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-muted/60">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${Math.max((valueOf(item) / maxValue) * 100, 2)}%`,
-                          backgroundColor: mode === "blocked" ? "#eb6834" : "#2a78d6",
-                        }}
-                      />
-                    </div>
-                  </div>
+                    <ProgressBar
+                      ratio={valueOf(item) / maxValue}
+                      color={mode === "blocked" ? "#eb6834" : "#2a78d6"}
+                      heightClass="h-1"
+                      index={i}
+                      className="mt-0.5"
+                    />
+                  </StaggerItem>
                 ))}
-              </div>
+              </Stagger>
             )}
           </div>
         </div>

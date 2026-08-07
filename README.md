@@ -1,9 +1,74 @@
 # FastGateway Management Console
 
-FastGateway provides basic management services, including simple login authorization and real-time configuration management, thereby enabling the management of dynamic routing.
+FastGateway is a self-hosted reverse-proxy and tunnel gateway. It combines a JWT-protected management API, a React dashboard, dynamically managed HTTP/HTTPS gateways, TCP/UDP L4 forwarding, and TunnelClient-based access to private services.
 
 -----
 Document Language: [English](README.md) | [简体中文](README-zh-cn.md)
+
+## Architecture
+
+FastGateway is a single deployable control plane and proxy runtime. `src/FastGateway` hosts the management API and dashboard, and creates one in-process Kestrel/YARP gateway for each enabled `Server` configuration. `TunnelClient` is an independent outbound agent for private services.
+
+```text
+                                   ┌─────────────────────────────┐
+ Browser / clients ──HTTP(S)/H2/H3►│ FastGateway                  │
+                                   │ management host              │
+                                   │ JWT API + React dashboard    │
+                                   └──────────────┬──────────────┘
+                                                  │
+        ┌─────────────────────────────────────────┼───────────────────────────────────────┐
+        ▼                                         ▼                                       ▼
+ per-Server Kestrel + YARP                 Tunnel manager                          L4 stream manager
+ domain/path routes                         HTTP/2 CONNECT / WebSocket              TCP / UDP / Both
+ service/cluster/static/tunnel              ⇄ TunnelClient                           upstream pool
+        │                                         │                                       │
+        ▼                                         ▼                                       ▼
+ HTTP services and files                    local services                         TCP/UDP services
+```
+
+### Source layout
+
+| Path | Responsibility |
+| --- | --- |
+| `src/FastGateway` | Main ASP.NET Core host, JWT API, static dashboard hosting, dynamic HTTP gateways, certificates, access control, rate limiting, statistics, file storage, and tunnel management. |
+| `src/FastGateway/Gateway` | Per-server YARP route/cluster construction and the TCP/UDP `StreamProxyManager`. |
+| `src/FastGateway/Services` | Minimal API endpoint groups and configuration-backed business services. |
+| `src/FastGateway/Middleware` | Client-IP resolution, statistics, timeout, access-control, failover, proxy-error, and abnormal-IP middleware. |
+| `src/FastGateway/Tunnels` | Server-side tunnel registration, agent lifecycle, control channels, and per-request tunnel streams. |
+| `src/TunnelClient` | Standalone tunnel agent. Reads `tunnel.json`, connects to the gateway over HTTP/2 or WebSocket, and forwards traffic to local services through YARP. |
+| `src/Core` | Shared stream wrappers and gateway entities/enums used by the server and agent. |
+| `src/Certes` | Vendored, Newtonsoft.Json/BouncyCastle-free, AOT-compatible ACME client used for Let's Encrypt certificates. |
+| `web` | React 19 + TypeScript + Vite dashboard. Docker and release builds copy its `dist` output into `src/FastGateway/wwwroot`. |
+
+### Runtime flow
+
+1. `Program` initializes `FastGatewayOptions`, JWT authentication, background services, and the JSON-backed `ConfigurationService`.
+2. The configuration service loads `data/gateway.config` (creating it when absent) and atomically writes changes back to disk.
+3. Enabled `Server` records create independent Kestrel/YARP gateway instances. Enabled `StreamForward` records start TCP/UDP listeners in `StreamProxyManager`.
+4. Each domain route is compiled into an in-memory YARP route and cluster. A route can target one service, a service cluster, a local static-file root, or a registered tunnel node (`node_<name>`).
+5. Gateway middleware resolves the client IP, handles ACME HTTP-01 challenges and HTTPS redirects, collects statistics, applies timeouts/rate limits/blacklists, performs failover and error handling, then forwards through YARP.
+6. The explicit reload APIs and tunnel registration update the in-memory route provider without requiring a process restart; configuration persistence and gateway lifecycle are handled separately by the management APIs.
+
+### Tunnel data path
+
+`TunnelClient` is started with `-c <config-file>`, registers its node with `/internal/gateway/Server/register`, and maintains a control connection to `/internal/gateway/Server`. The transport type is `h2` (HTTP/2 CONNECT) or `ws` (WebSocket); both use the `FastGateway` sub-protocol. When a public request matches a tunnel route, the server allocates a tunnel ID, the agent opens the corresponding data stream, and the two sides copy bytes bidirectionally to the local service.
+
+### Management API surface
+
+The backend uses ASP.NET Core Minimal APIs. The main groups are `/api/v1/authorization`, `/server`, `/domain`, `/cert`, `/tunnel`, `/stream-forward`, `/black-and-white`, `/rate-limit`, `/abnormal-ip`, `/statistics`, `/qps`, `/filestorage`, `/setting`, and `/system`. Most management groups require the JWT issued by `POST /api/v1/authorization`.
+
+### Runtime data
+
+All paths below are relative to the application directory; in the Docker image that directory is `/app`.
+
+| Path | Purpose |
+| --- | --- |
+| `data/gateway.config` | Persistent gateway, domain, certificate, access-control, rate-limit, setting, and L4 forwarding configuration. |
+| `data/stats.db` | SQLite request-statistics database used by the statistics background service. |
+| `data/keys/` | ACME account keys cached by email for certificate renewal. |
+| `certs/` | Generated or uploaded PFX certificates selected by SNI. |
+| `gateway.pfx` | Packaged fallback certificate used when no matching certificate is available. |
+| `ip2region.xdb` | Optional offline IP geolocation database used for traffic analysis. |
 
 ## Supported Features
 
@@ -16,8 +81,11 @@ Document Language: [English](README.md) | [简体中文](README-zh-cn.md)
 - [x] Static file service
 - [x] Single service proxy
 - [x] Cluster proxy
+- [x] TCP/UDP L4 port forwarding
+- [x] TunnelClient-based private service forwarding
+- [x] Upstream health checks and request-level failover
+- [x] Traffic statistics and IP geolocation
 - [x] Request source analysis
-- [x] Support for YAML import/export
 - [x] Support for custom rate limiting policies
 - [x] Support for black and white lists
 
@@ -37,67 +105,56 @@ FastGateway supports three ways to provide HTTPS certificates for your domains, 
 
 ## Technology Stack
 
-### Backend Technology Stack
+### Backend
 
-- .NET 10 for providing basic services
-- Yarp for providing reverse proxy services
-- FreeSql for database services
-- JWT for login authorization services
-- MiniApis for providing WebApi services
+- .NET 10 and ASP.NET Core Minimal APIs
+- Kestrel with HTTP/1.1, HTTP/2, and HTTP/3 support for configured HTTPS gateways
+- YARP 2.3 for reverse proxy routing, clusters, health checks, and forwarding
+- JWT Bearer authentication for the management API
+- JSON file persistence for gateway configuration (`data/gateway.config`)
+- Microsoft.Data.Sqlite for request statistics (`data/stats.db`)
+- AspNetCoreRateLimit for configurable rate-limit policies
+- Certes ACME client for Let's Encrypt HTTP-01/DNS-01 certificate workflows
+- IP2Region.Net and `ip2region.xdb` for offline IP attribution
 
-### Frontend Technology Stack
+### Frontend
 
-- reset-css for resetting default browser styles
-- semi for providing basic components
-- react-router-dom for routing management
+- React 19, TypeScript, and Vite
+- React Router for dashboard routing and lazy-loaded pages
+- Ant Design and Radix UI for controls and interaction primitives
+- Tailwind CSS v4 for styling
+- ECharts/Recharts for traffic and dashboard visualizations
 
-## Quick Start Gateway
+## Quick Start
+
+The container uses port `8080` for the management UI/API. HTTP/HTTPS listener ports are opened by enabled `Server` records in the dashboard.
 
 ```bash
-docker run -d --restart=always --name=fast-gateway -e PASSWORD=Aa123456 -p 8080:8080 -p 80:80 -p 443:443 -v $(pwd)/data:/data/ aidotnet/fast-gateway
+mkdir -p data certs
+
+docker run -d --restart=always --name=fast-gateway \
+  -e PASSWORD='change-this-password' \
+  -e TunnelToken='change-this-tunnel-token' \
+  -p 8080:8080 \
+  -p 80:80/tcp \
+  -p 443:443/tcp \
+  -p 443:443/udp \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/certs:/app/certs" \
+  aidotnet/fast-gateway:latest
 ```
 
-## Docker-Compose File
+Open `http://localhost:8080` after the container starts. If no password is supplied, the current fallback is `Aa123456`; replace it before exposing the management endpoint.
 
-```yml
+## Docker Compose
 
-﻿services:
-  fast-gateway:
-    image: aidotnet/fast-gateway
-    container_name: fast-gateway
-    restart: always
-    volumes:
-      - ./data:/app/data
-      - ./certs:/app/certs
-    ports:
-        - "8000:8080"
-        - "80:80"
-        - "443:443"
-        
+The checked-in `docker-compose.yml` builds `src/FastGateway/Dockerfile`, persists `data` and `certs`, and maps the management endpoint to port `8000`:
+
+```bash
+docker compose -f docker-compose.yml up -d --build
 ```
 
-If no password is provided, the default is:
-
-Password: Aa123456
-
-## Docker-compose Supporting HTTP3
-
-```yml
-
-﻿services:
-  fast-gateway.service:
-    image: aidotnet/fast-gateway
-    container_name: fast-gateway.service
-    restart: always
-    volumes:
-      - ./data:/app/data
-      - ./certs:/app/certs
-    ports:
-        - "8000:8080"
-        - "80:80"
-        - "443:443/udp"
-        - "443:443/tcp"
-```
+It maps `8000:8080`, `80:80`, and both `443/tcp` and `443/udp` for HTTP/3. For a pre-built multi-architecture image, use `aidotnet/fast-gateway:latest` as the image and remove the `build` section. Set `PASSWORD` and `TunnelToken` in the Compose environment for production deployments.
 
 ## Using `systemd` to Start Services on Linux
 
@@ -114,8 +171,8 @@ Remember to replace the configuration when filling in the following content:
 Description=FastGateway
 
 [Service]
-WorkingDirectory=Your unzipped directory
-ExecStart=/usr/bin/dotnet Your unzipped directory/FastGateway.dll
+WorkingDirectory=/opt/fastgateway
+ExecStart=/opt/fastgateway/FastGateway
 Restart=always
 # Restart service after 10 seconds if the dotnet service crashes:
 RestartSec=10
@@ -163,6 +220,29 @@ If you have made changes to the service and need to reload the configuration, yo
 ```shell
 systemctl restart fastgateway.service
 ```
+
+## Development and Build
+
+Requirements: .NET 10 SDK, Node.js 20+ with npm, and the native toolchain required by the target build. The default project settings enable Native AOT analysis/publishing for the main applications; use `-p:PublishAot=false` when producing a portable single-file artifact as the release workflow does.
+
+```bash
+# Build the .NET solution
+dotnet build FastGateway.sln
+
+# Build the dashboard
+cd web
+npm install
+npm run build
+cd ..
+
+# Run the management host with the launch profile (http://localhost:5202)
+dotnet run --project src/FastGateway/FastGateway.csproj
+
+# Run a tunnel client; -c is required by the client entry point
+dotnet run --project src/TunnelClient/TunnelClient.csproj -- -c ./src/TunnelClient/tunnel.json
+```
+
+For dashboard-only development, run `npm run dev` in `web`; Vite proxies `/api` to the backend at `http://localhost:5202`. Docker builds the dashboard in a Node 22 stage, then publishes the FastGateway Native AOT image for `linux/amd64` and `linux/arm64`. The Release workflow publishes self-contained single-file FastGateway and TunnelClient archives for Linux, Windows, and macOS on x64 and ARM64.
 
 ## Downloads
 

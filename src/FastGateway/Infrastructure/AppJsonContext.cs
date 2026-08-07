@@ -131,6 +131,8 @@ namespace FastGateway.Infrastructure;
 [JsonSerializable(typeof(CopyFileRequest))]
 [JsonSerializable(typeof(CreateFileRequest))]
 [JsonSerializable(typeof(SaveContentRequest))]
+[JsonSerializable(typeof(MergeChunksRequest))]
+[JsonSerializable(typeof(AbortUploadRequest))]
 // ===== 基元 =====
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(bool))]

@@ -1,4 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
+import { motion } from "motion/react";
+import { Reveal, TRANSITION } from "@/components/motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -19,6 +21,11 @@ const TrafficTab = lazy(() => import("./features/traffic"));
 const SecurityTab = lazy(() => import("./features/security"));
 
 const ALL_HOSTS = "__all__";
+
+const TABS = [
+  { value: "traffic", label: "流量分析" },
+  { value: "security", label: "安全态势" },
+] as const;
 
 function TabSkeleton() {
   return (
@@ -72,8 +79,23 @@ export default function DashboardPage() {
             <div className="flex items-center gap-4">
               <h1 className="hidden text-xl font-semibold tracking-tight lg:block">统计报表</h1>
               <TabsList>
-                <TabsTrigger value="traffic">流量分析</TabsTrigger>
-                <TabsTrigger value="security">安全态势</TabsTrigger>
+                {TABS.map((t) => (
+                  <TabsTrigger
+                    key={t.value}
+                    value={t.value}
+                    // 关掉 shadcn 自带的瞬时选中态，交给下面的 layoutId 滑块
+                    className="relative data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                  >
+                    {tab === t.value && (
+                      <motion.span
+                        layoutId="dashboard-tabs-indicator"
+                        className="absolute inset-0 rounded-md bg-background shadow"
+                        transition={TRANSITION.layout}
+                      />
+                    )}
+                    <span className="relative">{t.label}</span>
+                  </TabsTrigger>
+                ))}
               </TabsList>
             </div>
 
@@ -125,15 +147,22 @@ export default function DashboardPage() {
               </div>
           </div>
 
+          {/* Radix 切换时会卸载旧 Content、挂载新的，Reveal 因此每次都重播一次入场。
+              只做入场不做退场：加 forceMount 才能有退场，但那会让两个 Tab 同时挂载
+              并同时轮询，请求数直接翻倍 */}
           <TabsContent value="traffic" className="mt-4">
-            <Suspense fallback={<TabSkeleton />}>
-              <TrafficTab />
-            </Suspense>
+            <Reveal>
+              <Suspense fallback={<TabSkeleton />}>
+                <TrafficTab />
+              </Suspense>
+            </Reveal>
           </TabsContent>
           <TabsContent value="security" className="mt-4">
-            <Suspense fallback={<TabSkeleton />}>
-              <SecurityTab />
-            </Suspense>
+            <Reveal>
+              <Suspense fallback={<TabSkeleton />}>
+                <SecurityTab />
+              </Suspense>
+            </Reveal>
           </TabsContent>
         </Tabs>
       </div>

@@ -1,5 +1,6 @@
 import * as React from "react"
 import { Link, useLocation } from "react-router-dom"
+import { motion } from "motion/react"
 import type { LucideIcon } from "lucide-react"
 import {
   Activity,
@@ -18,6 +19,8 @@ import {
 } from "lucide-react"
 
 import { NavUser } from "@/components/nav-user"
+import { TRANSITION } from "@/components/motion"
+import { preloadRoute } from "@/routes/lazy-pages"
 import {
   Sidebar,
   SidebarContent,
@@ -130,18 +133,38 @@ export function AppSidebar({
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
+                {group.items.map((item) => {
+                  const active = item.children
+                    ? item.children.some((child) => isActivePath(pathname, child.to))
+                    : isActivePath(pathname, item.to)
+
+                  return (
                   <SidebarMenuItem key={item.key}>
+                    {/* 指示条挂在 li 上而非按钮内：SidebarMenuButton 是 overflow-hidden，
+                        放进去会被裁掉、layoutId 迁移时也会被切断。
+                        用 2px 竖条而非全宽 pill —— 侧栏折叠是纯 CSS 宽度过渡、不触发
+                        React 重渲染，layout 投影拿不到新盒模型，全宽 pill 会错位，
+                        而贴左边缘的细条 x/y 几乎不变，天然免疫。
+                        !item.children 是防御：未来填了子菜单不会出现两个同 layoutId */}
+                    {active && !item.children && (
+                      <motion.span
+                        layoutId="sidebar-active-indicator"
+                        className="pointer-events-none absolute left-0 top-1 bottom-1 z-10 w-[2px] rounded-full bg-sidebar-primary"
+                        transition={TRANSITION.layout}
+                      />
+                    )}
                     <SidebarMenuButton
                       asChild
-                      isActive={
-                        item.children
-                          ? item.children.some((child) => isActivePath(pathname, child.to))
-                          : isActivePath(pathname, item.to)
-                      }
+                      isActive={active}
                       tooltip={item.title}
                     >
-                      <Link to={item.to}>
+                      {/* hover/focus 时预取目标页 chunk：路由切换是 mode="wait"，
+                          旧页卸载后新页还在下载的空窗会露出 Suspense fallback */}
+                      <Link
+                        to={item.to}
+                        onMouseEnter={() => preloadRoute(item.to)}
+                        onFocus={() => preloadRoute(item.to)}
+                      >
                         <item.icon />
                         <span>{item.title}</span>
                       </Link>
@@ -155,7 +178,11 @@ export function AppSidebar({
                               asChild
                               isActive={isActivePath(pathname, child.to)}
                             >
-                              <Link to={child.to}>
+                              <Link
+                                to={child.to}
+                                onMouseEnter={() => preloadRoute(child.to)}
+                                onFocus={() => preloadRoute(child.to)}
+                              >
                                 <child.icon />
                                 <span>{child.title}</span>
                               </Link>
@@ -165,7 +192,8 @@ export function AppSidebar({
                       </SidebarMenuSub>
                     ) : null}
                   </SidebarMenuItem>
-                ))}
+                  )
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

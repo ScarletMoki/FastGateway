@@ -73,6 +73,63 @@ public static class FileStorageService
         }
     }
 
+    /// <summary>
+    ///     分片上传的暂存目录名。directory 端点会把它从列表里过滤掉。
+    ///     刻意放在目标目录下而不是 Path.GetTempPath()：用户往挂载的数据盘传大包时，
+    ///     /tmp 常在很小的系统盘或 tmpfs 上，合并还得跨设备整份复制。
+    /// </summary>
+    private const string UploadStagingDirName = ".fgupload";
+
+    /// <summary>过期分片的保留时长，覆盖上传中途关页面/断网的残留</summary>
+    private static readonly TimeSpan StagingRetention = TimeSpan.FromHours(24);
+
+    private static string ResolveStagingDirectory(string targetDirectory, string uploadId)
+    {
+        // uploadId 直接参与拼路径，必须白名单校验，否则可以用 ../ 穿越出去
+        if (string.IsNullOrWhiteSpace(uploadId) || uploadId.Length is < 8 or > 64 ||
+            !uploadId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+            throw new ValidationException("上传ID非法");
+
+        return Path.Combine(targetDirectory, UploadStagingDirName, uploadId);
+    }
+
+    private static void CleanupStaging(string stagingDirectory)
+    {
+        try
+        {
+            if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, true);
+
+            // 暂存根目录空了就一并删掉，不给用户留垃圾目录
+            var root = Path.GetDirectoryName(stagingDirectory);
+            if (root != null && Directory.Exists(root) &&
+                Path.GetFileName(root) == UploadStagingDirName &&
+                !Directory.EnumerateFileSystemEntries(root).Any())
+                Directory.Delete(root);
+        }
+        catch
+        {
+            // best effort：清理失败不该影响上传结果
+        }
+    }
+
+    private static void SweepStaleStaging(string targetDirectory)
+    {
+        try
+        {
+            var root = Path.Combine(targetDirectory, UploadStagingDirName);
+            if (!Directory.Exists(root)) return;
+
+            var deadline = DateTime.UtcNow - StagingRetention;
+            foreach (var dir in Directory.GetDirectories(root))
+                if (Directory.GetLastWriteTimeUtc(dir) < deadline)
+                    Directory.Delete(dir, true);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
     public static IEndpointRouteBuilder MapFileStorage(this IEndpointRouteBuilder app)
     {
         var fileStorage = app.MapGroup("/api/v1/filestorage")
@@ -121,7 +178,10 @@ public static class FileStorageService
             path = Path.Combine(drives, path.TrimStart('/'));
 
             var directory = new DirectoryInfo(path);
-            var directories = directory.GetDirectories();
+            // 过滤分片暂存目录，避免上传过程中树里冒出一个 .fgupload
+            var directories = directory.GetDirectories()
+                .Where(x => x.Name != UploadStagingDirName)
+                .ToArray();
             var files = directory.GetFiles();
             return new DirectoryListingDto
             {
@@ -180,60 +240,149 @@ public static class FileStorageService
         }).WithDescription("上传文件").WithDisplayName("上传文件").WithTags("文件存储");
 
         // 下载文件
-        fileStorage.MapGet("download", async (string path, string drives, HttpContext context) =>
+        fileStorage.MapGet("download", (string path, string drives) =>
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ValidationException("路径不能为空");
 
             if (string.IsNullOrWhiteSpace(drives)) throw new ValidationException("盘符不能为空");
 
-            path = Path.Combine(drives, path.TrimStart('/'));
+            var filePath = Path.Combine(drives, path.TrimStart('/'));
 
-            if (!File.Exists(path)) throw new ValidationException("文件不存在");
+            if (!File.Exists(filePath)) throw new ValidationException("文件不存在");
 
-            await context.Response.SendFileAsync(path);
+            var fileInfo = new FileInfo(filePath);
+
+            // 返回 IResult 交给框架写响应体，不再自己 SendFileAsync —— 后者会先把响应发完，
+            // 随后 ResultFilter 再写 ResultDto 就会因 headers 已锁定而抛异常。
+            //
+            // contentType 固定 application/octet-stream，不按扩展名推 MIME：
+            //   1) 前端 web/src/utils/fetch.ts 按 content-type 分派，含 json 的会被 JSON.parse、
+            //      text/plain 会被 text() 吃掉，只有其它类型才走 response.blob()；
+            //   2) 避免浏览器把 .html/.svg 当页面内联渲染。
+            //
+            // fileDownloadName 内部走 ContentDispositionHeaderValue.SetHttpFileName，会同时产出
+            // filename="..."（ASCII 回退）与 filename*=UTF-8''...（RFC 5987），中文名不乱码。
+            return TypedResults.PhysicalFile(
+                fileInfo.FullName,
+                "application/octet-stream",
+                fileInfo.Name,
+                fileInfo.LastWriteTimeUtc,
+                enableRangeProcessing: true);
         }).WithDescription("下载文件").WithDisplayName("下载文件").WithTags("文件存储");
 
-        // 上传文件/使用俩个接口实现切片上传
-        fileStorage.MapPost("upload/chunk", async (IFormFile file, string path, string drives, int index, int total) =>
+        // 分片上传。path/drives/uploadId/index/total 走 query —— Minimal API 的简单类型只从
+        // route/query 绑定，塞在 multipart form 里是拿不到的（与已有的 upload 端点保持一致）。
+        // body 只放分片本体。
+        fileStorage.MapPost("upload/chunk",
+                async (IFormFile file, string path, string drives, string uploadId, int index, int total) =>
+                {
+                    if (file == null) throw new ValidationException("文件不能为空");
+
+                    if (string.IsNullOrWhiteSpace(path)) throw new ValidationException("路径不能为空");
+
+                    if (string.IsNullOrWhiteSpace(drives)) throw new ValidationException("盘符不能为空");
+
+                    if (total <= 0) throw new ValidationException("分片总数非法");
+
+                    if (index < 0 || index >= total) throw new ValidationException("分片序号非法");
+
+                    path = Path.Combine(drives, path.TrimStart('/'));
+
+                    if (!Directory.Exists(path)) Directory.CreateDirectory(path);
+
+                    // 第一片时顺手清掉过期残留（关页面/断网导致的孤儿分片）
+                    if (index == 0) SweepStaleStaging(path);
+
+                    var stagingDirectory = ResolveStagingDirectory(path, uploadId);
+                    Directory.CreateDirectory(stagingDirectory);
+
+                    // 先写 .tmp 再原子改名：请求中断时不会留下“看起来完整”的半个分片，
+                    // 合并阶段的存在性检查才可信。
+                    var partPath = Path.Combine(stagingDirectory, $"{index:D6}.part");
+                    var tempPath = partPath + ".tmp";
+
+                    await using (var stream =
+                                 new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        await file.CopyToAsync(stream);
+                    }
+
+                    File.Move(tempPath, partPath, true);
+                })
+            .WithDescription("上传文件分片").WithDisplayName("上传文件分片").WithTags("文件存储")
+            .DisableAntiforgery();
+
+        fileStorage.MapPost("upload/merge", async (MergeChunksRequest request) =>
         {
-            if (file == null) throw new ValidationException("文件不能为空");
+            if (string.IsNullOrWhiteSpace(request.Path)) throw new ValidationException("路径不能为空");
 
-            if (string.IsNullOrWhiteSpace(path)) throw new ValidationException("路径不能为空");
+            if (string.IsNullOrWhiteSpace(request.Drives)) throw new ValidationException("盘符不能为空");
 
-            if (string.IsNullOrWhiteSpace(drives)) throw new ValidationException("盘符不能为空");
+            if (string.IsNullOrWhiteSpace(request.FileName)) throw new ValidationException("文件名不能为空");
 
-            path = Path.Combine(drives, path.TrimStart('/'));
+            if (request.Total <= 0) throw new ValidationException("分片总数非法");
 
-            if (!Directory.Exists(path)) Directory.CreateDirectory(path);
+            // 必须是纯文件名，防止 ../ 穿越
+            var fileName = Path.GetFileName(request.FileName);
+            if (fileName != request.FileName) throw new ValidationException("文件名非法");
 
-            var filePath = Path.Combine(path, file.FileName);
-            await using var stream = new FileStream(filePath, index == 0 ? FileMode.Create : FileMode.Append);
-            await file.CopyToAsync(stream);
-        }).WithDescription("上传文件").WithDisplayName("上传文件").WithTags("文件存储");
+            var directoryPath = Path.Combine(request.Drives, request.Path.TrimStart('/'));
+            if (!Directory.Exists(directoryPath)) throw new ValidationException("目标目录不存在");
 
-        fileStorage.MapPost("upload/merge", async (string path, string drives, string fileName) =>
-        {
-            if (string.IsNullOrWhiteSpace(path)) throw new ValidationException("路径不能为空");
+            var stagingDirectory = ResolveStagingDirectory(directoryPath, request.UploadId);
+            if (!Directory.Exists(stagingDirectory)) throw new ValidationException("分片不存在或已过期，请重新上传");
 
-            if (string.IsNullOrWhiteSpace(drives)) throw new ValidationException("盘符不能为空");
+            // 按序号构造路径，不用 Directory.GetFiles + OrderBy —— 那是字符串排序，
+            // 分片名未零填充时 .10 会排到 .2 前面。
+            var parts = Enumerable.Range(0, request.Total)
+                .Select(i => Path.Combine(stagingDirectory, $"{i:D6}.part"))
+                .ToArray();
 
-            path = Path.Combine(drives, path.TrimStart('/'));
+            var missing = parts.Count(p => !File.Exists(p));
+            if (missing > 0) throw new ValidationException($"缺少 {missing} 个分片，请重新上传");
 
-            if (!Directory.Exists(path)) Directory.CreateDirectory(path);
+            var filePath = Path.Combine(directoryPath, fileName);
+            var mergingPath = filePath + ".merging";
 
-            var filePath = Path.Combine(path, fileName);
-            var files = Directory.GetFiles(path, $"{fileName}.*");
-            if (files.Length == 0) throw new ValidationException("文件不存在");
-
-            await using var stream = new FileStream(filePath, FileMode.Create);
-            foreach (var file in files.OrderBy(x => x))
+            try
             {
-                await using var fs = new FileStream(file, FileMode.Open);
-                await fs.CopyToAsync(stream);
-            }
+                await using (var output = new FileStream(mergingPath, FileMode.Create, FileAccess.Write,
+                                 FileShare.None, 81920, true))
+                {
+                    foreach (var part in parts)
+                    {
+                        await using var input = new FileStream(part, FileMode.Open, FileAccess.Read,
+                            FileShare.Read, 81920, true);
+                        await input.CopyToAsync(output);
+                    }
+                }
 
-            foreach (var file in files) File.Delete(file);
-        }).WithDescription("合并文件").WithDisplayName("合并文件").WithTags("文件存储");
+                // 合并成功才原子替换目标：中途失败不会破坏同名旧文件。
+                // 两个人同时传同名文件时各写各的暂存目录，后完成者胜出，
+                // 不会产生内容交错的损坏文件。
+                File.Move(mergingPath, filePath, true);
+            }
+            catch
+            {
+                if (File.Exists(mergingPath)) File.Delete(mergingPath);
+                throw;
+            }
+            finally
+            {
+                CleanupStaging(stagingDirectory);
+            }
+        }).WithDescription("合并分片").WithDisplayName("合并分片").WithTags("文件存储");
+
+        // 放弃上传：前端取消或失败时调用，清理残留分片
+        fileStorage.MapPost("upload/abort", (AbortUploadRequest request) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Path)) throw new ValidationException("路径不能为空");
+
+            if (string.IsNullOrWhiteSpace(request.Drives)) throw new ValidationException("盘符不能为空");
+
+            var directoryPath = Path.Combine(request.Drives, request.Path.TrimStart('/'));
+            CleanupStaging(ResolveStagingDirectory(directoryPath, request.UploadId));
+        }).WithDescription("放弃上传").WithDisplayName("放弃上传").WithTags("文件存储");
 
         // 解压指定的zip文件
         fileStorage.MapPost("unzip", (UnzipRequest request) =>

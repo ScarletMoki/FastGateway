@@ -2,8 +2,10 @@ import { useMemo, useState } from "react";
 import { Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart } from "@/components/ui/bar-chart";
+import { AnimatedNumber } from "@/components/motion";
 import { getQpsData } from "@/services/QpsService";
 import { usePolling } from "../hooks/usePolling";
+import { formatInt } from "../types";
 
 /**
  * 实时 QPS 迷你卡（3 秒轮询 /api/v1/qps）。
@@ -35,7 +37,12 @@ export function QpsSparkCard({ className }: { className?: string }) {
       </CardHeader>
       <CardContent className="pt-0">
         <div className="flex items-baseline gap-1.5">
-          <span className="text-3xl font-semibold tabular-nums">{qps.toLocaleString()}</span>
+          {/* 3s 轮询 > 600ms 弹簧，两次更新之间动画能跑完，不会互相打断 */}
+          <AnimatedNumber
+            value={qps}
+            format={formatInt}
+            className="text-3xl font-semibold tabular-nums"
+          />
           <span className="text-xs text-muted-foreground">req/s</span>
         </div>
         <div className="mt-2 h-[64px]">

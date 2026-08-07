@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Ban, ShieldAlert, ShieldX } from "lucide-react";
 import { toast } from "sonner";
+import { Stagger, StaggerItem, SwapFade } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,8 @@ import { DonutLegendList } from "../../shared/DonutLegendList";
 import { StatTile } from "../../shared/StatTile";
 import {
   formatCount,
+  formatInt,
+  formatPercent2,
   formatSeriesTime,
   type RequestLogItem,
   type StatisticsOverview,
@@ -97,24 +100,27 @@ export default function SecurityTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <Stagger className="space-y-4">
+      <StaggerItem>
       <Card className="border-border/60 bg-card/80 shadow-sm">
         <CardContent className="grid grid-cols-2 divide-y divide-border/50 p-0 sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-6 xl:divide-x">
-          <StatTile label="拦截次数" value={formatCount(overview?.blocked ?? 0)} tone="danger" loading={loading} />
-          <StatTile label="拦截率" value={`${(overview?.blockRate ?? 0).toFixed(2)}%`} loading={loading} />
-          <StatTile label="黑名单拦截" value={formatCount(overview?.blocked403 ?? 0)} loading={loading} />
-          <StatTile label="限流拦截" value={formatCount(overview?.blocked429 ?? 0)} loading={loading} />
-          <StatTile label="攻击 IP" value={formatCount(overview?.attackIps ?? 0)} tone="danger" loading={loading} />
+          <StatTile label="拦截次数" value={overview?.blocked ?? 0} format={formatCount} tone="danger" loading={loading} />
+          <StatTile label="拦截率" value={overview?.blockRate ?? 0} format={formatPercent2} round={2} loading={loading} />
+          <StatTile label="黑名单拦截" value={overview?.blocked403 ?? 0} format={formatCount} loading={loading} />
+          <StatTile label="限流拦截" value={overview?.blocked429 ?? 0} format={formatCount} loading={loading} />
+          <StatTile label="攻击 IP" value={overview?.attackIps ?? 0} format={formatCount} tone="danger" loading={loading} />
           <StatTile
             label="实时异常 IP"
-            value={String(overview?.abnormalIpsLive ?? 0)}
+            value={overview?.abnormalIpsLive ?? 0}
+            format={formatInt}
             tone={(overview?.abnormalIpsLive ?? 0) > 0 ? "warning" : "default"}
             loading={loading}
           />
         </CardContent>
       </Card>
+      </StaggerItem>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <StaggerItem className="grid gap-4 xl:grid-cols-3">
         <Card className="border-border/60 bg-card/80 shadow-sm xl:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -122,10 +128,12 @@ export default function SecurityTab() {
               拦截与 5xx 趋势
             </CardTitle>
           </CardHeader>
-          <CardContent className="h-[220px] pt-0">
-            {loading ? (
-              <Skeleton className="h-full w-full" />
-            ) : (
+          <CardContent className="relative h-[220px] pt-0">
+            <SwapFade
+              loading={loading}
+              skeleton={<Skeleton className="h-full w-full" />}
+              className="h-full"
+            >
               <AreaChart
                 data={chartData}
                 categories={["blocked", "error5xx"]}
@@ -134,7 +142,7 @@ export default function SecurityTab() {
                 index="time"
                 valueFormatter={formatCount}
               />
-            )}
+            </SwapFade>
           </CardContent>
         </Card>
 
@@ -154,9 +162,9 @@ export default function SecurityTab() {
             />
           </CardContent>
         </Card>
-      </div>
+      </StaggerItem>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <StaggerItem className="grid gap-4 xl:grid-cols-2">
         <Card className="border-border/60 bg-card/80 shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -253,7 +261,7 @@ export default function SecurityTab() {
             </Table>
           </CardContent>
         </Card>
-      </div>
-    </div>
+      </StaggerItem>
+    </Stagger>
   );
 }
