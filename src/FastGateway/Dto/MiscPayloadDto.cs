@@ -53,6 +53,18 @@ public sealed class FilePropertyDto
 }
 
 /// <summary>
+///     DNS-01 验证记录（证书申请 prepare 步骤返回给前端展示/填写）
+/// </summary>
+public sealed class DnsChallengeRecordDto
+{
+    public string RecordName { get; set; } = string.Empty;
+
+    public string RecordType { get; set; } = string.Empty;
+
+    public string RecordValue { get; set; } = string.Empty;
+}
+
+/// <summary>
 ///     通用 Code/Message 响应（网关内部注册、故障转移等场景）
 /// </summary>
 public sealed class CodeMessageDto

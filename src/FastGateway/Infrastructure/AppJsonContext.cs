@@ -33,6 +33,7 @@ namespace FastGateway.Infrastructure;
 [JsonSerializable(typeof(List<Cert>))]
 [JsonSerializable(typeof(BlacklistAndWhitelist))]
 [JsonSerializable(typeof(List<BlacklistAndWhitelist>))]
+[JsonSerializable(typeof(RegionCatalogDto))]
 [JsonSerializable(typeof(RateLimit))]
 [JsonSerializable(typeof(List<RateLimit>))]
 [JsonSerializable(typeof(Setting))]
@@ -128,6 +129,7 @@ namespace FastGateway.Infrastructure;
 [JsonSerializable(typeof(RegisterNodeResult))]
 // 注：ClusterMessage/ClusterConfigPayload/ClusterCertFile 走 MessagePack 二进制（见 ClusterProtocol），不注册 JSON
 // ===== 网关内部 / 错误响应 =====
+[JsonSerializable(typeof(DnsChallengeRecordDto))]
 [JsonSerializable(typeof(CodeMessageDto))]
 [JsonSerializable(typeof(ProxyErrorDto))]
 [JsonSerializable(typeof(Tunnel))]

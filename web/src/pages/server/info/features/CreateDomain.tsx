@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import AccessNodeSelect from "./AccessNodeSelect";
 import { MultiSelect } from "@/components/ui/multi-select";
 import {
     Select,
@@ -326,6 +327,13 @@ export default function CreateDomain({ visible, onClose, onOk }: CreateDomainPro
                                 </Select>
                             </div>
                         </div>
+
+                        <AccessNodeSelect
+                            value={value.accessNodeId}
+                            onChange={(accessNodeId) =>
+                                setValue((prev) => ({ ...prev, accessNodeId }))
+                            }
+                        />
                     </TabsContent>
 
                     <TabsContent value="target" className="space-y-4">

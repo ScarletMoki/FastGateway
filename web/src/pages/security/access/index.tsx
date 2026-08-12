@@ -48,8 +48,8 @@ const AccessControlPage = memo(() => {
       .catch(() => message.error("删除失败"));
   };
 
-  const columns: ColumnDef<any>[] = useMemo(
-    () => [
+  const columns: ColumnDef<any>[] = useMemo(() => {
+    const allColumns: ColumnDef<any>[] = [
       {
         accessorKey: "name",
         header: "名称",
@@ -84,6 +84,29 @@ const AccessControlPage = memo(() => {
         },
       },
       {
+        id: "regions",
+        accessorKey: "regions",
+        header: "封禁地区",
+        cell: ({ row }) => {
+          const regions = (row.getValue("regions") as string[]) || [];
+          if (!regions.length) return <span className="text-sm text-muted-foreground">-</span>;
+          return (
+            <div className="flex max-w-xs flex-wrap gap-1">
+              {regions.slice(0, 3).map((region) => (
+                <Badge key={region} variant="secondary" className="text-xs">
+                  {region.replace("|", " · ")}
+                </Badge>
+              ))}
+              {regions.length > 3 && (
+                <Badge variant="outline" className="text-xs">
+                  +{regions.length - 3}
+                </Badge>
+              )}
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "description",
         header: "描述",
         cell: ({ row }) => (
@@ -114,10 +137,11 @@ const AccessControlPage = memo(() => {
           );
         },
       },
-    ],
+    ];
+    // 地区列仅黑名单视图展示
+    return isBlacklist ? allColumns : allColumns.filter((col) => col.id !== "regions");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isBlacklist]
-  );
+  }, [isBlacklist]);
 
   const switchKind = (next: AccessKind) => {
     if (next === kind) return;

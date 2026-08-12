@@ -10,7 +10,8 @@ public enum BlockReason : byte
     None = 0,
     Blacklist = 1,
     RateLimit = 2,
-    Whitelist = 3
+    Whitelist = 3,
+    Region = 4
 }
 
 /// <summary>

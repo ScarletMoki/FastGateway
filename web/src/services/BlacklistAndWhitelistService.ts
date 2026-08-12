@@ -17,3 +17,15 @@ export const DeleteBlacklist = (id: string) => {
 export const UpdateBlacklist = (id: string, value: any) => {
     return putJson(`${baseUrl}/${id}`, value);
 }
+
+export interface RegionCatalog {
+    countries: string[];
+    chinaProvinces: string[];
+}
+
+/**
+ * 获取可选地区列表（国家与中国省份，来自 ip2region.xdb），用于地区黑名单选择器。
+ */
+export const GetRegions = () => {
+    return get(`${baseUrl}/regions`);
+}

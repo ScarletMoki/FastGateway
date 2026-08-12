@@ -86,12 +86,42 @@ public sealed class IpPolicyMatcher
             exact.Add(rule);
         }
 
-        // 排序并合并重叠区间，保证二分查找时任意值最多命中一个候选区间
+        var (starts, ends) = MergeRanges(ranges);
+
+        return new IpPolicyMatcher(
+            exact.ToFrozenSet(StringComparer.OrdinalIgnoreCase),
+            starts,
+            ends,
+            v6Networks.ToArray());
+    }
+
+    /// <summary>
+    ///     由原始 IPv4 区间直接构建（用于地区规则预编译出的区间集合），仅走二分查找路径。
+    /// </summary>
+    public static IpPolicyMatcher BuildFromRanges(List<(uint Start, uint End)> ranges)
+    {
+        var (starts, ends) = MergeRanges(ranges);
+
+        return new IpPolicyMatcher(
+            FrozenSet<string>.Empty,
+            starts,
+            ends,
+            Array.Empty<V6Network>());
+    }
+
+    /// <summary>
+    ///     排序并合并重叠/相邻区间，保证二分查找时任意值最多命中一个候选区间。
+    /// </summary>
+    private static (uint[] Starts, uint[] Ends) MergeRanges(List<(uint Start, uint End)> ranges)
+    {
         ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
         var merged = new List<(uint Start, uint End)>(ranges.Count);
         foreach (var range in ranges)
         {
-            if (merged.Count > 0 && range.Start <= merged[^1].End)
+            // 重叠或首尾相邻（End + 1 == Start，注意 uint.MaxValue 溢出）都合并
+            if (merged.Count > 0 &&
+                (range.Start <= merged[^1].End ||
+                 (merged[^1].End != uint.MaxValue && range.Start == merged[^1].End + 1)))
             {
                 if (range.End > merged[^1].End) merged[^1] = (merged[^1].Start, range.End);
             }
@@ -109,11 +139,7 @@ public sealed class IpPolicyMatcher
             ends[i] = merged[i].End;
         }
 
-        return new IpPolicyMatcher(
-            exact.ToFrozenSet(StringComparer.OrdinalIgnoreCase),
-            starts,
-            ends,
-            v6Networks.ToArray());
+        return (starts, ends);
     }
 
     public bool Contains(string ip)

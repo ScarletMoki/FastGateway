@@ -8,31 +8,50 @@ namespace FastGateway.Services;
 
 public static class BlacklistAndWhitelistService
 {
-    private sealed record IpPolicySnapshot(IpPolicyMatcher Whitelist, IpPolicyMatcher Blacklist);
+    private sealed record IpPolicySnapshot(
+        IpPolicyMatcher Whitelist,
+        IpPolicyMatcher Blacklist,
+        IpPolicyMatcher RegionBlacklist);
 
-    private static IpPolicySnapshot _snapshot = new(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty);
+    private static IpPolicySnapshot _snapshot =
+        new(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty, IpPolicyMatcher.Empty);
 
     public static void RefreshCache(IEnumerable<BlacklistAndWhitelist> blacklistAndWhitelists)
     {
         if (blacklistAndWhitelists == null)
         {
-            Volatile.Write(ref _snapshot, new IpPolicySnapshot(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty));
+            Volatile.Write(ref _snapshot,
+                new IpPolicySnapshot(IpPolicyMatcher.Empty, IpPolicyMatcher.Empty, IpPolicyMatcher.Empty));
             return;
         }
 
-        var whitelist = blacklistAndWhitelists
+        var items = blacklistAndWhitelists as IList<BlacklistAndWhitelist> ?? blacklistAndWhitelists.ToList();
+
+        var whitelist = items
             .Where(x => x is { Enable: true, IsBlacklist: false })
             .SelectMany(x => x.Ips ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x));
 
         // 黑名单强制启用，不受 Enable 开关影响（安全防护不可关闭）
-        var blacklist = blacklistAndWhitelists
+        var blacklist = items
             .Where(x => x.IsBlacklist)
             .SelectMany(x => x.Ips ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x));
 
+        // 地区规则在此一次性预编译为 IPv4 区间（扫描 ip2region.xdb 段索引），请求路径零 GeoIP 查询
+        var regionRules = items
+            .Where(x => x.IsBlacklist)
+            .SelectMany(x => x.Regions ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+
+        var regionMatcher = regionRules.Count == 0
+            ? IpPolicyMatcher.Empty
+            : IpPolicyMatcher.BuildFromRanges(RegionIpRangeProvider.GetRanges(regionRules));
+
         Volatile.Write(ref _snapshot,
-            new IpPolicySnapshot(IpPolicyMatcher.Build(whitelist), IpPolicyMatcher.Build(blacklist)));
+            new IpPolicySnapshot(IpPolicyMatcher.Build(whitelist), IpPolicyMatcher.Build(blacklist), regionMatcher));
     }
 
     public static void RefreshCache(ConfigurationService configService)
@@ -58,7 +77,7 @@ public static class BlacklistAndWhitelistService
         if (enableWhitelist && !snapshot.Whitelist.IsEmpty)
             return snapshot.Whitelist.Contains(ip);
 
-        if (enableBlacklist && snapshot.Blacklist.Contains(ip))
+        if (enableBlacklist && (snapshot.Blacklist.Contains(ip) || snapshot.RegionBlacklist.Contains(ip)))
             return false;
 
         return true;
@@ -95,11 +114,21 @@ public static class BlacklistAndWhitelistService
                 return;
             }
 
-            if (enableBlacklist && snapshot.Blacklist.Contains(ip))
+            if (enableBlacklist)
             {
-                context.Items[StatisticsCollector.BlockReasonKey] = (byte)BlockReason.Blacklist;
-                context.Response.StatusCode = 403;
-                return;
+                if (snapshot.Blacklist.Contains(ip))
+                {
+                    context.Items[StatisticsCollector.BlockReasonKey] = (byte)BlockReason.Blacklist;
+                    context.Response.StatusCode = 403;
+                    return;
+                }
+
+                if (snapshot.RegionBlacklist.Contains(ip))
+                {
+                    context.Items[StatisticsCollector.BlockReasonKey] = (byte)BlockReason.Region;
+                    context.Response.StatusCode = 403;
+                    return;
+                }
             }
 
             await next(context);
@@ -122,12 +151,17 @@ public static class BlacklistAndWhitelistService
         {
             if (string.IsNullOrWhiteSpace(whitelist.Name)) throw new ValidationException("名称不能为空");
 
-            whitelist.Ips = whitelist.Ips.Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct().ToList();
+            NormalizeRules(whitelist);
 
             configService.AddBlacklistAndWhitelist(whitelist);
             RefreshCache(configService);
         }).WithDescription("创建黑白名单").WithDisplayName("创建黑白名单").WithTags("黑白名单");
+
+        domain.MapGet("regions", (ILoggerFactory loggerFactory) =>
+                RegionIpRangeProvider.GetAvailableRegions(loggerFactory.CreateLogger(nameof(RegionIpRangeProvider))))
+            .WithDescription("获取可选地区列表（国家与中国省份，来自 ip2region.xdb）")
+            .WithDisplayName("获取可选地区列表")
+            .WithTags("黑白名单");
 
         domain.MapGet(string.Empty, (ConfigurationService configService, bool isBlacklist, int page, int pageSize) =>
             {
@@ -158,6 +192,8 @@ public static class BlacklistAndWhitelistService
         {
             if (string.IsNullOrWhiteSpace(blacklist.Name)) throw new ValidationException("名称不能为空");
 
+            NormalizeRules(blacklist);
+
             blacklist.Id = id;
             configService.UpdateBlacklistAndWhitelist(blacklist);
             RefreshCache(configService);
@@ -165,5 +201,22 @@ public static class BlacklistAndWhitelistService
 
 
         return app;
+    }
+
+    /// <summary>
+    ///     去重去空；地区规则仅黑名单支持，黑名单允许只配置地区不配置 IP。
+    /// </summary>
+    private static void NormalizeRules(BlacklistAndWhitelist item)
+    {
+        item.Ips = (item.Ips ?? []).Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim()).Distinct().ToList();
+
+        item.Regions = item.IsBlacklist
+            ? (item.Regions ?? []).Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim()).Distinct().ToList()
+            : null;
+
+        if (item.Ips.Count == 0 && (item.Regions?.Count ?? 0) == 0)
+            throw new ValidationException("IP 列表与地区列表不能同时为空");
     }
 }

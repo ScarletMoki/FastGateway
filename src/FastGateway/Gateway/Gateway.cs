@@ -1,5 +1,6 @@
 ﻿using Core.Entities;
 using Core.Entities.Core;
+using FastGateway.Cluster;
 using FastGateway.Dto;
 using FastGateway.Extensions;
 using FastGateway.Infrastructure;
@@ -441,12 +442,48 @@ public static class Gateway
                         .Replace("/{**catch-all}", "")
                         .Replace("{**catch-all}", "");
 
-                    // 如果存在泛域名则需要保留原始Host
-                    if (context.Route.Match.Hosts?.Any(x => x.Contains('*')) == true)
-                        context.AddOriginalHost();
-                    else if (server.CopyRequestHost) context.AddOriginalHost();
+                    string? relayTargetNode = null;
+                    var isRelay = context.Cluster?.Metadata?
+                        .TryGetValue(ClusterRelay.RelayMetadataKey, out relayTargetNode) == true;
 
-                    if (!string.IsNullOrEmpty(prefix)) context.AddPathRemovePrefix(prefix);
+                    // 中继必须保留原始 Host（目标节点按域名匹配同一路由）；泛域名/CopyRequestHost 同理
+                    if (isRelay
+                        || context.Route.Match.Hosts?.Any(x => x.Contains('*')) == true
+                        || server.CopyRequestHost)
+                        context.AddOriginalHost();
+
+                    // 中继保留完整路径，由目标节点的同一路由自行剥前缀
+                    if (!isRelay && !string.IsNullOrEmpty(prefix)) context.AddPathRemovePrefix(prefix);
+
+                    if (isRelay)
+                        // 出方向：跳数 +1 并出示集群令牌，供下一跳节点信任与防环
+                        context.AddRequestTransform(transformContext =>
+                        {
+                            var hops = 0;
+                            var incoming = transformContext.HttpContext.Request.Headers[ClusterRelay.RelayCountHeader];
+                            if (incoming.Count > 0) _ = int.TryParse(incoming[0], out hops);
+
+                            var proxyHeaders = transformContext.ProxyRequest.Headers;
+                            proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
+                            proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
+                            proxyHeaders.TryAddWithoutValidation(ClusterRelay.RelayCountHeader,
+                                (hops + 1).ToString());
+
+                            var token = ClusterRelay.GetRelayToken(relayTargetNode!);
+                            if (token != null)
+                                proxyHeaders.TryAddWithoutValidation(ClusterRelay.RelayTokenHeader, token);
+
+                            return ValueTask.CompletedTask;
+                        });
+                    else
+                        // 直连真实上游前剥离集群内部头，避免泄漏到业务服务
+                        context.AddRequestTransform(transformContext =>
+                        {
+                            var proxyHeaders = transformContext.ProxyRequest.Headers;
+                            proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
+                            proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
+                            return ValueTask.CompletedTask;
+                        });
 
                     context.ResponseTransforms.Add(new ResponseFuncTransform((transformContext =>
                     {
@@ -699,9 +736,36 @@ public static class Gateway
     {
         app.Use(async (context, next) =>
         {
-            // 覆写 X-Forwarded-For 为直连 IP：防止客户端伪造的 XFF 链透传给上游
             var ip = context.Connection.RemoteIpAddress;
-            context.Request.Headers["X-Forwarded-For"] = ip?.ToString();
+            var requestHeaders = context.Request.Headers;
+
+            // 集群中继识别：令牌有效才信任跳数头，否则视为外部伪造并清除
+            var trustedRelay = false;
+            if (requestHeaders.ContainsKey(ClusterRelay.RelayCountHeader))
+            {
+                if (ClusterRelay.ValidateRelayToken(requestHeaders[ClusterRelay.RelayTokenHeader]))
+                {
+                    trustedRelay = true;
+
+                    if (int.TryParse(requestHeaders[ClusterRelay.RelayCountHeader], out var hops)
+                        && hops > ClusterRelay.MaxHops)
+                    {
+                        // 正常链路最多两跳（Worker → Master → Worker），超出说明节点间配置不一致成环
+                        context.Response.StatusCode = StatusCodes.Status508LoopDetected;
+                        return;
+                    }
+                }
+                else
+                {
+                    requestHeaders.Remove(ClusterRelay.RelayCountHeader);
+                    requestHeaders.Remove(ClusterRelay.RelayTokenHeader);
+                }
+            }
+
+            // 覆写 X-Forwarded-For 为直连 IP：防止客户端伪造的 XFF 链透传给上游；
+            // 可信中继保留上一跳网关写入的真实客户端 IP
+            if (!trustedRelay)
+                requestHeaders["X-Forwarded-For"] = ip?.ToString();
 
             if (context.Request.IsHttps)
             {
@@ -774,6 +838,19 @@ public static class Gateway
         };
     }
 
+    /// <summary>中继 cluster 元数据：传输模式（隧道/标准）+ 中继标记（值为目标节点 Id）</summary>
+    private static Dictionary<string, string> CreateRelayClusterMetadata(string relayAddress, string accessNodeId)
+    {
+        return new Dictionary<string, string>(2)
+        {
+            {
+                ClientModeMetadataKey,
+                IsTunnelService(relayAddress) ? TunnelClientMode : StandardClientMode
+            },
+            { ClusterRelay.RelayMetadataKey, accessNodeId }
+        };
+    }
+
     private static bool IsTunnelService(string? service)
     {
         if (string.IsNullOrWhiteSpace(service)) return false;
@@ -836,6 +913,39 @@ public static class Gateway
             else
                 path = $"/{path.TrimStart('/')}/{{**catch-all}}";
 
+            // 集群「访问节点」中继：路由指定了其他节点访问上游时，本节点仅做二跳转发
+            // （Worker → Master 直连回源；Master → Worker 走集群隧道），保留原始 Host 与完整路径
+            var relayAddress = ClusterRelay.ResolveRelayAddress(domainName.AccessNodeId, server);
+            if (relayAddress != null)
+            {
+                routes.Add(new RouteConfig
+                {
+                    RouteId = domainName.Id,
+                    ClusterId = domainName.Id,
+                    Timeout = TimeSpan.FromSeconds(server.Timeout),
+                    Match = new RouteMatch
+                    {
+                        Hosts = domainName.Domains,
+                        Path = path
+                    },
+                    Metadata = new Dictionary<string, string>(0)
+                });
+
+                clusters.Add(new ClusterConfig
+                {
+                    ClusterId = domainName.Id,
+                    Destinations = new Dictionary<string, DestinationConfig>
+                    {
+                        { "relay", new DestinationConfig { Address = relayAddress } }
+                    },
+                    // 主动健康检查探测的是中继链路而非真实上游，对中继目的地不启用
+                    HttpClient = CreateHttpClientConfig(),
+                    HttpRequest = CreateHttpRequestConfig(server),
+                    Metadata = CreateRelayClusterMetadata(relayAddress, domainName.AccessNodeId!)
+                });
+
+                continue;
+            }
 
             Dictionary<string, string> routeMetadata, clusterMetadata;
 

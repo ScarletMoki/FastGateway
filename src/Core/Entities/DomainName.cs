@@ -81,6 +81,12 @@ public sealed class DomainName
     public int HealthCheckTimeoutSeconds { get; set; } = 3;
 
     /// <summary>
+    /// 集群模式下指定由哪个节点访问上游：null/空 = 收到请求的节点直连（默认，保持原有行为）；
+    /// "master" = 主网关；其他值 = 从节点 Id。请求到达非指定节点时自动中继给指定节点。
+    /// </summary>
+    public string? AccessNodeId { get; set; }
+
+    /// <summary>
     /// 静态文件或目录
     /// </summary>
     public string? Root { get; set; }

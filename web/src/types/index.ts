@@ -78,6 +78,8 @@ export interface DomainName {
     healthCheckIntervalSeconds: number;
     healthCheckTimeoutSeconds: number;
     root: string | null;
+    /** 集群模式下指定由哪个节点访问上游：空 = 本节点直连；"master" = 主网关；其他 = 从节点 Id */
+    accessNodeId?: string | null;
 }
 
 export enum ServiceType {

@@ -36,6 +36,8 @@ public class ClusterStateService
         {
             _state = new ClusterState();
         }
+
+        ClusterRelay.UpdateSnapshot(_state);
     }
 
     /// <summary>
@@ -57,6 +59,8 @@ public class ClusterStateService
         lock (_lockObject)
         {
             mutate(_state);
+
+            ClusterRelay.UpdateSnapshot(_state);
 
             try
             {

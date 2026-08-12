@@ -3,12 +3,13 @@ import { Button as ShadcnButton } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { message } from '@/utils/toast';
-import { useState } from "react";
-import { CreateBlacklist } from "@/services/BlacklistAndWhitelistService";
+import { useEffect, useMemo, useState } from "react";
+import { CreateBlacklist, GetRegions, RegionCatalog } from "@/services/BlacklistAndWhitelistService";
 import { Badge } from "@/components/ui/badge";
-import { X, Shield, ShieldCheck } from "lucide-react";
+import { X, Shield, ShieldCheck, Globe2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 interface CreateBlacklistAndWhitelistProps {
     isBlacklist: boolean;
@@ -25,12 +26,32 @@ const CreateBlacklistAndWhitelist: React.FC<CreateBlacklistAndWhitelistProps> = 
 }: CreateBlacklistAndWhitelistProps) => {
     const [value, setValue] = useState({
         ips: [] as string[],
+        regions: [] as string[],
         name: '',
         description: '',
         enable: true,
         isBlacklist: isBlacklist,
     });
     const [ipInput, setIpInput] = useState('');
+    const [regionCatalog, setRegionCatalog] = useState<RegionCatalog | null>(null);
+
+    useEffect(() => {
+        if (!visible || !isBlacklist || regionCatalog) return;
+        GetRegions()
+            .then((res) => setRegionCatalog(res.data))
+            .catch(() => setRegionCatalog({ countries: [], chinaProvinces: [] }));
+    }, [visible, isBlacklist, regionCatalog]);
+
+    // 地区选项：国家 + 中国省份（规则值 "中国|省份"），名称与 ip2region.xdb 完全一致
+    const regionOptions = useMemo(() => {
+        if (!regionCatalog) return [];
+        const countries = (regionCatalog.countries ?? []).map((c) => ({ label: c, value: c }));
+        const provinces = (regionCatalog.chinaProvinces ?? []).map((p) => ({
+            label: `中国 · ${p}`,
+            value: `中国|${p}`,
+        }));
+        return [...countries, ...provinces];
+    }, [regionCatalog]);
 
     const handleChange = (field: string) => (e: { target: any; }) => {
         const { target } = e;
@@ -43,12 +64,17 @@ const CreateBlacklistAndWhitelist: React.FC<CreateBlacklistAndWhitelistProps> = 
             message.error('请输入名称');
             return;
         }
-        if (!value.ips.length) {
+        if (isBlacklist) {
+            if (!value.ips.length && !value.regions.length) {
+                message.error('请至少添加一个 IP 或封禁地区');
+                return;
+            }
+        } else if (!value.ips.length) {
             message.error('请输入IP');
             return
         }
 
-        CreateBlacklist(value)
+        CreateBlacklist({ ...value, regions: isBlacklist ? value.regions : undefined })
             .then(() => {
                 message.success('新增成功');
                 onOk();
@@ -104,7 +130,7 @@ const CreateBlacklistAndWhitelist: React.FC<CreateBlacklistAndWhitelistProps> = 
                     <div className="space-y-4">
                         <Label className="text-sm font-medium">
                             IP地址列表
-                            <span className="text-destructive ml-1">*</span>
+                            {!isBlacklist && <span className="text-destructive ml-1">*</span>}
                         </Label>
                         
                         <div className="border rounded-lg p-4 space-y-4">
@@ -176,6 +202,26 @@ const CreateBlacklistAndWhitelist: React.FC<CreateBlacklistAndWhitelistProps> = 
                             </div>
                         </div>
                     </div>
+
+                    {/* 地区封禁仅黑名单支持：规则在保存后预编译为 IP 区间，请求时零 GeoIP 查询 */}
+                    {isBlacklist && (
+                        <div className="space-y-2">
+                            <Label className="text-sm font-medium flex items-center gap-1.5">
+                                <Globe2 className="h-4 w-4 text-muted-foreground" />
+                                封禁地区
+                            </Label>
+                            <MultiSelect
+                                value={value.regions}
+                                onChange={(regions) => setValue({ ...value, regions })}
+                                options={regionOptions}
+                                allowCustom={false}
+                                placeholder={regionCatalog ? "搜索并选择国家或中国省份..." : "地区列表加载中..."}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                来自该地区的所有 IPv4 请求将被拒绝（403）。基于 ip2region 离线库，IPv6 不受地区规则约束。
+                            </p>
+                        </div>
+                    )}
 
                     {/* 黑名单为安全防护强制启用，不提供开关 */}
                     {!isBlacklist && (

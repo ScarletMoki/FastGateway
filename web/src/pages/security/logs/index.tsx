@@ -10,11 +10,12 @@ import { useDashboardStore } from "@/pages/dashboard/store";
 import type { RequestLogItem } from "@/pages/dashboard/types";
 import { SecurityFilterBar } from "../shared/FilterBar";
 
-const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝" };
+const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝", 4: "地区封禁" };
 const BLOCK_CLASSES: Record<number, string> = {
   1: "border-destructive/40 bg-destructive/10 text-destructive",
   2: "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
   3: "border-primary/40 bg-primary/10 text-primary",
+  4: "border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400",
 };
 
 function formatTs(ts: number) {

@@ -74,6 +74,7 @@ public static class Program
         builder.Services.AddSingleton<ConfigurationService>();
         builder.Services.AddSingleton<ClusterStateService>();
         builder.Services.AddHostedService<ClusterNodeAgentService>();
+        builder.Services.AddHostedService<ClusterRelayAgentService>();
 
         var app = builder.Build();
 
@@ -124,6 +125,9 @@ public static class Program
 
         // 集群同步通道使用 WebSocket
         app.UseWebSockets();
+
+        // 集群数据面隧道：从节点出站注册，供跨节点请求中继（NodeToken 鉴权）
+        app.Map(ClusterTunnelHub.EndpointPath, tunnel => tunnel.Run(ClusterTunnelHub.HandleAsync));
 
         app.MapDomain()
             .MapBlacklistAndWhitelist()

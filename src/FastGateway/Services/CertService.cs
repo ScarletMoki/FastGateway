@@ -254,11 +254,11 @@ public static class CertService
             // 缓存订单地址，供 validate 步骤续用（30 分钟内有效）
             MemoryCache.Set($"dns-order:{cert.Id}", order.Location.ToString(), TimeSpan.FromMinutes(30));
 
-            return ResultDto.CreateSuccess(new
+            return ResultDto.CreateSuccess(new DnsChallengeRecordDto
             {
-                recordName,
-                recordType = "TXT",
-                recordValue = dnsTxt
+                RecordName = recordName,
+                RecordType = "TXT",
+                RecordValue = dnsTxt
             });
         }
         catch (Exception e)

@@ -86,7 +86,9 @@ internal class TunnelClientFactory(
 
         handler.ConnectCallback = async (context, cancellationToken) =>
         {
-            if (agentClientManager.TryGetValue(context.DnsEndPoint.Host.ToLower(), out var agentClient))
+            var host = context.DnsEndPoint.Host.ToLower();
+
+            if (agentClientManager.TryGetValue(host, out var agentClient))
             {
                 var agentTunnel =
                     await agentTunnelFactory.CreateHttpTunnelAsync(agentClient.Connection, cancellationToken);
@@ -94,6 +96,11 @@ internal class TunnelClientFactory(
 
                 return agentTunnel;
             }
+
+            // 集群中继目的地（node_cluster-*）：主连接挂在管理应用的进程级枢纽，而非本子应用的管理器
+            if (Cluster.ClusterTunnelHub.Clients.TryGetValue(host, out var clusterClient))
+                return await Cluster.ClusterTunnelHub.Tunnels.CreateHttpTunnelAsync(clusterClient.Connection,
+                    cancellationToken);
 
             return await previous(context, cancellationToken);
         };

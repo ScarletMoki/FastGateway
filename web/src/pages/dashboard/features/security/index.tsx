@@ -39,7 +39,7 @@ interface AbnormalIpRow {
   lastStatusCode?: number;
 }
 
-const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝" };
+const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝", 4: "地区封禁" };
 
 export default function SecurityTab() {
   const { range, host } = useDashboardStore();
