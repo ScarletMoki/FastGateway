@@ -327,16 +327,16 @@ export default function CreateDomain({ visible, onClose, onOk }: CreateDomainPro
                                 </Select>
                             </div>
                         </div>
+                    </TabsContent>
 
+                    <TabsContent value="target" className="space-y-4">
                         <AccessNodeSelect
                             value={value.accessNodeId}
                             onChange={(accessNodeId) =>
                                 setValue((prev) => ({ ...prev, accessNodeId }))
                             }
                         />
-                    </TabsContent>
 
-                    <TabsContent value="target" className="space-y-4">
                         {value.serviceType === ServiceType.Service ? (
                             <Card>
                                 <CardHeader>
