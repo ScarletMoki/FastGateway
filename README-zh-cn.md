@@ -1,13 +1,23 @@
 # FastGateway 管理端
 
-FastGateway 是一个自托管的反向代理与隧道网关，提供 JWT 登录授权、React 管理面板、动态 HTTP/HTTPS 网关、TCP/UDP 四层转发，以及通过 TunnelClient 访问内网服务的能力。
+<p align="center">
+  <img src="docs/images/hero.jpg" alt="FastGateway 控制面" width="100%">
+</p>
+
+FastGateway 是一个自托管的反向代理与隧道网关，提供 JWT 登录授权、React 管理面板、动态 HTTP/HTTPS 网关、TCP/UDP 四层转发、通过 TunnelClient 访问内网服务，以及可选的主/从集群。
 
 -----
 文档语言: [English](README.md) | [简体中文](README-zh-cn.md)
 
+版本说明见 [CHANGELOG.md](CHANGELOG.md)。
+
+<p align="center">
+  <img src="docs/images/dashboard.jpg" alt="FastGateway 管理面板" width="100%">
+</p>
+
 ## 架构概览
 
-FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/FastGateway` 承载管理 API 和管理面板，并为每个启用的 `Server` 配置创建一个进程内 Kestrel/YARP 网关；`TunnelClient` 是面向内网服务的独立出站客户端。
+FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/FastGateway` 承载管理 API 和管理面板，并为每个启用的 `Server` 配置创建一个进程内 Kestrel/YARP 网关；`TunnelClient` 是面向内网服务的独立出站客户端。多台 FastGateway 可组成集群：主网关持有配置真相，从节点落盘并热更新，还可按路由把流量中继到指定访问节点。
 
 ```text
                                    ┌─────────────────────────────┐
@@ -16,14 +26,15 @@ FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/
                                    │ JWT API + React 管理面板     │
                                    └──────────────┬──────────────┘
                                                   │
-        ┌─────────────────────────────────────────┼───────────────────────────────────────┐
-        ▼                                         ▼                                       ▼
- 每个 Server 的 Kestrel + YARP              隧道管理器                             四层转发管理器
- 域名/路径路由                              HTTP/2 CONNECT / WebSocket               TCP / UDP / 两者
- 单服务/集群/静态文件/隧道                  ⇄ TunnelClient                            上游节点池
-        │                                         │                                       │
-        ▼                                         ▼                                       ▼
- HTTP 服务与静态文件                       内网服务                              TCP/UDP 服务
+        ┌──────────────────────────┬──────────────┼──────────────────────────┐
+        ▼                          ▼              ▼                          ▼
+ 每个 Server 的 Kestrel + YARP  隧道管理器     四层转发管理器              集群
+ 域名/路径路由                  HTTP/2 CONNECT  TCP / UDP / 两者           主 / 从
+ 单服务/集群/静态文件/          / WebSocket     上游节点池                 配置同步 +
+ 隧道 / 访问节点                ⇄ TunnelClient                             数据面中继
+        │                          │              │                          │
+        ▼                          ▼              ▼                          ▼
+ HTTP 服务与静态文件            内网服务       TCP/UDP 服务               对端网关
 ```
 
 ### 源码目录
@@ -35,6 +46,7 @@ FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/
 | `src/FastGateway/Services` | Minimal API 端点组和基于配置的业务服务。 |
 | `src/FastGateway/Middleware` | 客户端 IP 解析、统计、超时、访问控制、故障转移、代理错误和异常 IP 中间件。 |
 | `src/FastGateway/Tunnels` | 服务端隧道注册、节点生命周期、控制通道和按请求创建的数据隧道。 |
+| `src/FastGateway/Cluster` | 主/从集群：接入码加入、WebSocket 配置同步、MessagePack 协议与数据面中继。 |
 | `src/TunnelClient` | 独立隧道客户端。读取 `tunnel.json`，通过 HTTP/2 或 WebSocket 连接网关，并通过 YARP 转发到本地服务。 |
 | `src/Core` | 服务端与客户端共享的流包装器、网关实体和枚举。 |
 | `src/Certes` | 内置的、无 Newtonsoft.Json/BouncyCastle 依赖且兼容 AOT 的 ACME 客户端，用于申请 Let's Encrypt 证书。 |
@@ -42,20 +54,24 @@ FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/
 
 ### 运行链路
 
-1. `Program` 初始化 `FastGatewayOptions`、JWT 认证、后台服务和基于 JSON 的 `ConfigurationService`。
-2. 配置服务加载 `data/gateway.config`（不存在时自动创建），配置变更通过原子替换写回磁盘。
+1. `Program` 初始化 `FastGatewayOptions`、JWT 认证、后台服务、`ConfigurationService` 和 `ClusterStateService`。
+2. 配置服务加载 `data/gateway.config`（不存在时自动创建），配置变更通过原子替换写回磁盘。集群角色与节点成员关系保存在 `data/cluster.json`。
 3. 每个启用的 `Server` 配置创建独立的 Kestrel/YARP 网关；每个启用的 `StreamForward` 配置由 `StreamProxyManager` 启动 TCP/UDP 监听。
-4. 每条域名路由都会编译为内存中的 YARP 路由和集群，可指向单个服务、服务集群、本地静态文件目录，或已注册的隧道节点（`node_<name>`）。
+4. 每条域名路由都会编译为内存中的 YARP 路由和集群，可指向单个服务、服务集群、本地静态文件目录，或已注册的隧道节点（`node_<name>`）。集群模式下还可指定访问节点，由其他网关中继而不是各自直连上游。
 5. 网关中间件依次完成客户端 IP 解析、ACME HTTP-01 验证与 HTTPS 跳转、统计采集、超时/限流/黑名单控制、故障转移和错误处理，最后交给 YARP 转发。
-6. 显式 reload API 和隧道注册会更新内存路由，无需重启进程；配置持久化与网关生命周期由管理 API 分别处理。
+6. 显式 reload API 和隧道注册会更新内存路由，无需重启进程。主网关上的配置变更会去抖动后推送给在线从节点。
 
 ### 隧道数据路径
+
+<p align="center">
+  <img src="docs/images/tunnel.jpg" alt="FastGateway 内网隧道" width="100%">
+</p>
 
 `TunnelClient` 使用 `-c <配置文件>` 启动，先调用 `/internal/gateway/Server/register` 注册节点，再维护到 `/internal/gateway/Server` 的控制连接。传输类型支持 `h2`（HTTP/2 CONNECT）和 `ws`（WebSocket），两者使用 `FastGateway` 子协议。当公网请求匹配隧道路由时，服务端分配隧道 ID，客户端建立对应数据流，双方以全双工方式将字节转发到本地服务。
 
 ### 管理 API
 
-后端使用 ASP.NET Core Minimal API，主要分组包括 `/api/v1/authorization`、`/server`、`/domain`、`/cert`、`/tunnel`、`/stream-forward`、`/black-and-white`、`/rate-limit`、`/abnormal-ip`、`/statistics`、`/qps`、`/filestorage`、`/setting` 和 `/system`。除登录接口外，大多数管理分组需要 `POST /api/v1/authorization` 签发的 JWT。
+后端使用 ASP.NET Core Minimal API，主要分组包括 `/api/v1/authorization`、`/server`、`/domain`、`/cert`、`/tunnel`、`/stream-forward`、`/cluster`、`/black-and-white`、`/rate-limit`、`/abnormal-ip`、`/statistics`、`/qps`、`/filestorage`、`/setting` 和 `/system`。除登录接口外，大多数管理分组需要 `POST /api/v1/authorization` 签发的 JWT。集群加入/注册/同步端点使用接入码或节点令牌鉴权，不走 JWT。
 
 ### 运行时数据
 
@@ -64,6 +80,7 @@ FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/
 | 路径 | 用途 |
 | --- | --- |
 | `data/gateway.config` | 持久化网关、域名、证书、访问控制、限流、系统设置和四层转发配置。 |
+| `data/cluster.json` | 集群角色、接入码和主/从节点成员关系。 |
 | `data/stats.db` | 统计后台服务使用的 SQLite 请求统计数据库。 |
 | `data/keys/` | 按邮箱缓存 ACME 账户密钥，用于证书续期。 |
 | `certs/` | 自动生成或上传的 PFX 证书，按 SNI 选择。 |
@@ -73,21 +90,45 @@ FastGateway 是一个可单机部署的管理控制面与代理运行时。`src/
 ## 支持功能
 
 - [x] 登录授权
-- [x] 自动申请HTTPS证书（Let's Encrypt / HTTP-01）
-- [x] 自动续期HTTPS证书
+- [x] 自动申请 HTTPS 证书（Let's Encrypt / HTTP-01）
+- [x] 自动续期 HTTPS 证书
 - [x] 泛域名证书（Let's Encrypt / DNS-01）
-- [x] 上传自定义HTTPS证书（PFX / PEM）
-- [x] dashboard监控
-- [x] 静态文件服务
+- [x] 上传自定义 HTTPS 证书（PFX / PEM）
+- [x] dashboard 监控
+- [x] 静态文件服务（ETag / Last-Modified，304）
 - [x] 单服务代理
 - [x] 集群代理
 - [x] TCP/UDP 四层端口转发
 - [x] 通过 TunnelClient 转发内网服务
+- [x] 主/从集群：配置同步与流量中继
+- [x] 路由级访问节点（由哪个集群成员访问上游）
+- [x] 服务级客户端 IP 来源（`X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP`）
 - [x] 上游健康检查和请求级故障转移
 - [x] 流量统计和 IP 归属地分析
 - [x] 请求来源分析
-- [x] 支持自定义限流策略
-- [x] 支持黑白名单
+- [x] 可配置请求日志保留时长（1 / 7 / 15 / 30 天）
+- [x] 自定义限流策略（按 IP 固定窗口）
+- [x] 黑白名单
+- [x] 异常 IP 检测
+- [x] 进程内文件管理（支持分片上传）
+
+## 集群管理
+
+<p align="center">
+  <img src="docs/images/cluster.jpg" alt="FastGateway 主从集群" width="100%">
+</p>
+
+在管理面板打开「集群管理」。新实例默认为**独立运行**，集群为可选项，单节点行为与以往完全一致。
+
+1. **创建主网关** — 在需要持有配置的网关上，填写从节点可访问的管理地址（例如 `https://gw-a.example.com:8080`），生成接入码。接入码 24 小时内有效。生成第一份接入码后，本节点升为主网关。
+
+2. **加入为从节点** — 在另一台 FastGateway 上粘贴接入码，可选填写节点名称后加入。从节点向主网关注册，并维持 WebSocket 控制通道。主网关立即推送全量配置快照（服务、域名路由、黑白名单、限流策略、四层转发、证书及 PFX 文件）。之后在主网关上的修改会自动下发；从节点本地修改会在下次同步时被覆盖。
+
+3. **访问节点** — 在域名路由上，主网关可指定由哪个成员访问上游：收到请求的节点（默认）、主网关，或某个从节点。请求落到非指定节点时自动中继（从节点 → 主网关走主网关业务端口；主网关 → 从节点走从节点出站的集群隧道；从节点 → 其他从节点经主网关两跳）。
+
+4. **运维操作** — 主网关展示节点在线状态与已同步版本，可立即推送配置、移除节点或解散集群。从节点可主动退出，并保留最后一次同步的配置继续独立转发。从节点不参与 ACME 签发与续期，证书由主网关统一签发并随快照下发。
+
+节点间协议为 WebSocket 二进制帧：1 字节版本号 + LZ4 压缩的 MessagePack，序列化由源生成器完成，兼容 Native AOT（零反射）。
 
 ## HTTPS 证书管理
 
@@ -111,9 +152,10 @@ FastGateway 在「证书管理」页面提供三种方式为域名配置 HTTPS �
 - Kestrel，为配置的 HTTPS 网关提供 HTTP/1.1、HTTP/2 和 HTTP/3 支持
 - YARP 2.3，用于反向代理路由、集群、健康检查和转发
 - JWT Bearer，用于管理 API 登录授权
-- JSON 文件持久化网关配置（`data/gateway.config`）
+- JSON 文件持久化网关配置（`data/gateway.config`）和集群状态（`data/cluster.json`）
 - Microsoft.Data.Sqlite，用于请求统计（`data/stats.db`）
-- AspNetCoreRateLimit，用于可配置的限流策略
+- `System.Threading.RateLimiting`，按 IP 分区的固定窗口限流
+- MessagePack（LZ4），用于兼容 AOT 的集群快照和证书文件传输
 - Certes ACME 客户端，用于 Let's Encrypt HTTP-01/DNS-01 证书流程
 - IP2Region.Net 和 `ip2region.xdb`，用于离线 IP 归属地分析
 
@@ -144,11 +186,13 @@ docker run -d --restart=always --name=fast-gateway \
   aidotnet/fast-gateway:latest
 ```
 
-容器启动后访问 `http://localhost:8080`。如果没有提供密码，当前源码回退到 `Aa123456`；将管理端口暴露到公网前请务必修改密码。
+容器启动后访问 `http://localhost:8080`。如果没有提供密码，当前源码回退到 `Aa123456`；将管理端口暴露到公网前请务必修改密码。HTTP/3 需要映射 `443/udp`。
+
+发布镜像为 Native AOT，基于 chiseled 精简根文件系统（无 shell、非 root）。`aidotnet/fast-gateway` 为多架构镜像，同时支持 `linux/amd64` 与 `linux/arm64`。
 
 ## Docker Compose
 
-仓库中的 `docker-compose.yml` 会构建 `src/FastGateway/Dockerfile`，持久化 `data` 和 `certs`，并将管理端口映射为 `8000`：
+仓库中的 `docker-compose.yml` 会构建 `src/FastGateway/Dockerfile`，持久化 `data` 和 `certs`，将管理端口映射为 `8000`，镜像名为 `registry.cn-shenzhen.aliyuncs.com/token-ai/fast-gateway`：
 
 ```bash
 docker compose -f docker-compose.yml up -d --build
@@ -156,17 +200,17 @@ docker compose -f docker-compose.yml up -d --build
 
 该文件映射 `8000:8080`、`80:80`，以及 `443/tcp` 和 `443/udp`（HTTP/3）。如果使用预构建的多架构镜像，可将镜像替换为 `aidotnet/fast-gateway:latest` 并移除 `build` 配置；生产环境请在 Compose 的 `environment` 中设置 `PASSWORD` 和 `TunnelToken`。
 
-## Linux使用`systemd`启动服务
+## Linux 使用 `systemd` 启动服务
 
-下载Linux压缩包，然后解压程序，使用nano创建`fastgateway.service`
+从 [Releases](../../releases) 下载 Linux 压缩包，解压到例如 `/opt/fastgateway`，然后创建 `fastgateway.service`：
 
 ```shell
 nano /etc/systemd/system/fastgateway.service
 ```
 
-填写以下内容的时候记得替换配置
+填写以下内容时请替换路径和密钥：
 
-```tex
+```ini
 [Unit]
 Description=FastGateway
 
@@ -174,52 +218,28 @@ Description=FastGateway
 WorkingDirectory=/opt/fastgateway
 ExecStart=/opt/fastgateway/FastGateway
 Restart=always
-# Restart service after 10 seconds if the dotnet service crashes:
 RestartSec=10
 KillSignal=SIGINT
 SyslogIdentifier=dotnet-fastgateway
 User=root
 Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=PASSWORD=change-this-password
+Environment=TunnelToken=change-this-tunnel-token
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-接下来，重新加载 systemd 以使新的服务单元文件生效：
+重新加载 systemd 并启动服务：
 
 ```shell
 systemctl daemon-reload
-```
-
-现在你可以启动服务了：
-
-```shell
 systemctl start fastgateway.service
-```
-
-要使服务在系统启动时自动启动，请启用它：
-
-```shell
 systemctl enable fastgateway.service
-```
-
-你可以使用下命令检查服务的状态：
-
-```shell
 systemctl status fastgateway.service
 ```
 
-如果你需要停止服务，可以使用：
-
-```shell
-systemctl stop fastgateway.service
-```
-
-如果你对服务做了更改并需要重新加载配置，可以重新启动服务：
-
-```shell
-systemctl restart fastgateway.service
-```
+停止或重启使用 `systemctl stop fastgateway.service` 和 `systemctl restart fastgateway.service`。
 
 ## 开发与构建
 
@@ -260,4 +280,4 @@ Docker 镜像 `aidotnet/fast-gateway` 为多架构镜像，同时支持 `linux/a
 
 ## 第三方下载
 
-- [ip2region.xdb](https://tokenfile.oss-cn-beijing.aliyuncs.com/ip2region.xdb) 用于ip离线归属地
+- [ip2region.xdb](https://tokenfile.oss-cn-beijing.aliyuncs.com/ip2region.xdb) 用于 IP 离线归属地

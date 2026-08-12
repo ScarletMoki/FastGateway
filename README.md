@@ -1,13 +1,23 @@
 # FastGateway Management Console
 
-FastGateway is a self-hosted reverse-proxy and tunnel gateway. It combines a JWT-protected management API, a React dashboard, dynamically managed HTTP/HTTPS gateways, TCP/UDP L4 forwarding, and TunnelClient-based access to private services.
+<p align="center">
+  <img src="docs/images/hero.jpg" alt="FastGateway control plane" width="100%">
+</p>
+
+FastGateway is a self-hosted reverse-proxy and tunnel gateway. It combines a JWT-protected management API, a React dashboard, dynamically managed HTTP/HTTPS gateways, TCP/UDP L4 forwarding, TunnelClient-based access to private services, and optional Master/Worker clustering.
 
 -----
 Document Language: [English](README.md) | [简体中文](README-zh-cn.md)
 
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+<p align="center">
+  <img src="docs/images/dashboard.jpg" alt="FastGateway dashboard" width="100%">
+</p>
+
 ## Architecture
 
-FastGateway is a single deployable control plane and proxy runtime. `src/FastGateway` hosts the management API and dashboard, and creates one in-process Kestrel/YARP gateway for each enabled `Server` configuration. `TunnelClient` is an independent outbound agent for private services.
+FastGateway is a single deployable control plane and proxy runtime. `src/FastGateway` hosts the management API and dashboard, and creates one in-process Kestrel/YARP gateway for each enabled `Server` configuration. `TunnelClient` is an independent outbound agent for private services. Multiple FastGateway instances can form a cluster: the Master owns configuration, Workers apply snapshots locally and can relay traffic to a designated access node.
 
 ```text
                                    ┌─────────────────────────────┐
@@ -16,14 +26,15 @@ FastGateway is a single deployable control plane and proxy runtime. `src/FastGat
                                    │ JWT API + React dashboard    │
                                    └──────────────┬──────────────┘
                                                   │
-        ┌─────────────────────────────────────────┼───────────────────────────────────────┐
-        ▼                                         ▼                                       ▼
- per-Server Kestrel + YARP                 Tunnel manager                          L4 stream manager
- domain/path routes                         HTTP/2 CONNECT / WebSocket              TCP / UDP / Both
- service/cluster/static/tunnel              ⇄ TunnelClient                           upstream pool
-        │                                         │                                       │
-        ▼                                         ▼                                       ▼
- HTTP services and files                    local services                         TCP/UDP services
+        ┌──────────────────────────┬──────────────┼──────────────────────────┐
+        ▼                          ▼              ▼                          ▼
+ per-Server Kestrel + YARP   Tunnel manager   L4 stream manager        Cluster
+ domain/path routes          HTTP/2 CONNECT   TCP / UDP / Both         Master / Worker
+ service/cluster/static/     / WebSocket      upstream pool            config sync +
+ tunnel / access-node        ⇄ TunnelClient                            data-plane relay
+        │                          │              │                          │
+        ▼                          ▼              ▼                          ▼
+ HTTP services and files     local services   TCP/UDP services         peer gateways
 ```
 
 ### Source layout
@@ -35,6 +46,7 @@ FastGateway is a single deployable control plane and proxy runtime. `src/FastGat
 | `src/FastGateway/Services` | Minimal API endpoint groups and configuration-backed business services. |
 | `src/FastGateway/Middleware` | Client-IP resolution, statistics, timeout, access-control, failover, proxy-error, and abnormal-IP middleware. |
 | `src/FastGateway/Tunnels` | Server-side tunnel registration, agent lifecycle, control channels, and per-request tunnel streams. |
+| `src/FastGateway/Cluster` | Master/Worker clustering: invite/join, WebSocket config sync, MessagePack protocol, and data-plane relay. |
 | `src/TunnelClient` | Standalone tunnel agent. Reads `tunnel.json`, connects to the gateway over HTTP/2 or WebSocket, and forwards traffic to local services through YARP. |
 | `src/Core` | Shared stream wrappers and gateway entities/enums used by the server and agent. |
 | `src/Certes` | Vendored, Newtonsoft.Json/BouncyCastle-free, AOT-compatible ACME client used for Let's Encrypt certificates. |
@@ -42,20 +54,24 @@ FastGateway is a single deployable control plane and proxy runtime. `src/FastGat
 
 ### Runtime flow
 
-1. `Program` initializes `FastGatewayOptions`, JWT authentication, background services, and the JSON-backed `ConfigurationService`.
-2. The configuration service loads `data/gateway.config` (creating it when absent) and atomically writes changes back to disk.
+1. `Program` initializes `FastGatewayOptions`, JWT authentication, background services, `ConfigurationService`, and `ClusterStateService`.
+2. The configuration service loads `data/gateway.config` (creating it when absent) and atomically writes changes back to disk. Cluster role and node membership live in `data/cluster.json`.
 3. Enabled `Server` records create independent Kestrel/YARP gateway instances. Enabled `StreamForward` records start TCP/UDP listeners in `StreamProxyManager`.
-4. Each domain route is compiled into an in-memory YARP route and cluster. A route can target one service, a service cluster, a local static-file root, or a registered tunnel node (`node_<name>`).
+4. Each domain route is compiled into an in-memory YARP route and cluster. A route can target one service, a service cluster, a local static-file root, or a registered tunnel node (`node_<name>`). In a cluster, a route may also name an access node so other gateways relay instead of connecting upstream themselves.
 5. Gateway middleware resolves the client IP, handles ACME HTTP-01 challenges and HTTPS redirects, collects statistics, applies timeouts/rate limits/blacklists, performs failover and error handling, then forwards through YARP.
-6. The explicit reload APIs and tunnel registration update the in-memory route provider without requiring a process restart; configuration persistence and gateway lifecycle are handled separately by the management APIs.
+6. The explicit reload APIs and tunnel registration update the in-memory route provider without requiring a process restart. On a Master, configuration changes are debounced and pushed to online Workers.
 
 ### Tunnel data path
+
+<p align="center">
+  <img src="docs/images/tunnel.jpg" alt="FastGateway private tunnel" width="100%">
+</p>
 
 `TunnelClient` is started with `-c <config-file>`, registers its node with `/internal/gateway/Server/register`, and maintains a control connection to `/internal/gateway/Server`. The transport type is `h2` (HTTP/2 CONNECT) or `ws` (WebSocket); both use the `FastGateway` sub-protocol. When a public request matches a tunnel route, the server allocates a tunnel ID, the agent opens the corresponding data stream, and the two sides copy bytes bidirectionally to the local service.
 
 ### Management API surface
 
-The backend uses ASP.NET Core Minimal APIs. The main groups are `/api/v1/authorization`, `/server`, `/domain`, `/cert`, `/tunnel`, `/stream-forward`, `/black-and-white`, `/rate-limit`, `/abnormal-ip`, `/statistics`, `/qps`, `/filestorage`, `/setting`, and `/system`. Most management groups require the JWT issued by `POST /api/v1/authorization`.
+The backend uses ASP.NET Core Minimal APIs. The main groups are `/api/v1/authorization`, `/server`, `/domain`, `/cert`, `/tunnel`, `/stream-forward`, `/cluster`, `/black-and-white`, `/rate-limit`, `/abnormal-ip`, `/statistics`, `/qps`, `/filestorage`, `/setting`, and `/system`. Most management groups require the JWT issued by `POST /api/v1/authorization`. Cluster join/register/sync endpoints authenticate with invite or node tokens rather than JWT.
 
 ### Runtime data
 
@@ -64,6 +80,7 @@ All paths below are relative to the application directory; in the Docker image t
 | Path | Purpose |
 | --- | --- |
 | `data/gateway.config` | Persistent gateway, domain, certificate, access-control, rate-limit, setting, and L4 forwarding configuration. |
+| `data/cluster.json` | Cluster role, invite tokens, and Master/Worker membership. |
 | `data/stats.db` | SQLite request-statistics database used by the statistics background service. |
 | `data/keys/` | ACME account keys cached by email for certificate renewal. |
 | `certs/` | Generated or uploaded PFX certificates selected by SNI. |
@@ -78,16 +95,40 @@ All paths below are relative to the application directory; in the Docker image t
 - [x] Wildcard domain certificates (Let's Encrypt / DNS-01)
 - [x] Upload custom HTTPS certificates (PFX / PEM)
 - [x] Dashboard monitoring
-- [x] Static file service
+- [x] Static file service (ETag / Last-Modified, 304)
 - [x] Single service proxy
 - [x] Cluster proxy
 - [x] TCP/UDP L4 port forwarding
 - [x] TunnelClient-based private service forwarding
+- [x] Master/Worker clustering with config sync and traffic relay
+- [x] Per-route access node (which cluster member reaches the upstream)
+- [x] Per-server client IP source (`X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP`)
 - [x] Upstream health checks and request-level failover
 - [x] Traffic statistics and IP geolocation
 - [x] Request source analysis
-- [x] Support for custom rate limiting policies
-- [x] Support for black and white lists
+- [x] Configurable request-log retention (1 / 7 / 15 / 30 days)
+- [x] Custom rate-limit policies (per-IP fixed window)
+- [x] Black and white lists
+- [x] Abnormal-IP detection
+- [x] In-process file manager with chunked upload
+
+## Cluster Management
+
+<p align="center">
+  <img src="docs/images/cluster.jpg" alt="FastGateway Master/Worker cluster" width="100%">
+</p>
+
+Open **Cluster** in the dashboard. A new instance starts as **Standalone**. Clustering is optional: a single node keeps working exactly as before.
+
+1. **Create a Master** — On the gateway that should own configuration, enter a management URL that Workers can reach (for example `https://gw-a.example.com:8080`) and generate an invite code. The code is valid for 24 hours. Generating the first invite promotes the node to Master.
+
+2. **Join as a Worker** — On another FastGateway, paste the invite code, optionally set a node name, and join. The Worker registers with the Master, then keeps a WebSocket control channel open. The Master immediately pushes a full configuration snapshot (servers, domain routes, black/white lists, rate-limit policies, L4 forwards, certificates, and PFX files). Later edits on the Master are pushed automatically; local Worker edits are overwritten on the next sync.
+
+3. **Access node** — On a domain route, the Master can choose which member should reach the upstream: the receiving node (default), the Master, or a named Worker. Requests that land on a different member are relayed (Worker → Master over the Master's business port; Master → Worker over an outbound cluster tunnel; Worker → other Worker in two hops via the Master).
+
+4. **Operations** — The Master shows node online status and synced version, and can push config immediately, remove a node, or dissolve the cluster. A Worker can leave and keep the last synced config as a standalone gateway. Workers do not run ACME issuance or renewal; certificates are issued on the Master and distributed with the snapshot.
+
+The node-to-node protocol is WebSocket binary frames: 1-byte version + MessagePack with LZ4 compression, serialized by a source-generated resolver so Native AOT stays reflection-free.
 
 ## HTTPS Certificate Management
 
@@ -111,9 +152,10 @@ FastGateway supports three ways to provide HTTPS certificates for your domains, 
 - Kestrel with HTTP/1.1, HTTP/2, and HTTP/3 support for configured HTTPS gateways
 - YARP 2.3 for reverse proxy routing, clusters, health checks, and forwarding
 - JWT Bearer authentication for the management API
-- JSON file persistence for gateway configuration (`data/gateway.config`)
+- JSON file persistence for gateway configuration (`data/gateway.config`) and cluster state (`data/cluster.json`)
 - Microsoft.Data.Sqlite for request statistics (`data/stats.db`)
-- AspNetCoreRateLimit for configurable rate-limit policies
+- `System.Threading.RateLimiting` for per-IP partitioned fixed-window rate limits
+- MessagePack (LZ4) for AOT-safe cluster snapshots and certificate file transfer
 - Certes ACME client for Let's Encrypt HTTP-01/DNS-01 certificate workflows
 - IP2Region.Net and `ip2region.xdb` for offline IP attribution
 
@@ -144,29 +186,31 @@ docker run -d --restart=always --name=fast-gateway \
   aidotnet/fast-gateway:latest
 ```
 
-Open `http://localhost:8080` after the container starts. If no password is supplied, the current fallback is `Aa123456`; replace it before exposing the management endpoint.
+Open `http://localhost:8080` after the container starts. If no password is supplied, the current fallback is `Aa123456`; replace it before exposing the management endpoint. `443/udp` is required for HTTP/3.
+
+The published image is a Native AOT build on a chiseled base (no shell, non-root). `aidotnet/fast-gateway` is a multi-arch image for `linux/amd64` and `linux/arm64`.
 
 ## Docker Compose
 
-The checked-in `docker-compose.yml` builds `src/FastGateway/Dockerfile`, persists `data` and `certs`, and maps the management endpoint to port `8000`:
+The checked-in `docker-compose.yml` builds `src/FastGateway/Dockerfile`, persists `data` and `certs`, maps the management endpoint to port `8000`, and tags the image as `registry.cn-shenzhen.aliyuncs.com/token-ai/fast-gateway`:
 
 ```bash
 docker compose -f docker-compose.yml up -d --build
 ```
 
-It maps `8000:8080`, `80:80`, and both `443/tcp` and `443/udp` for HTTP/3. For a pre-built multi-architecture image, use `aidotnet/fast-gateway:latest` as the image and remove the `build` section. Set `PASSWORD` and `TunnelToken` in the Compose environment for production deployments.
+It maps `8000:8080`, `80:80`, and both `443/tcp` and `443/udp` for HTTP/3. For a pre-built multi-architecture image, set `image: aidotnet/fast-gateway:latest` and remove the `build` section. Set `PASSWORD` and `TunnelToken` in the Compose `environment` for production deployments.
 
 ## Using `systemd` to Start Services on Linux
 
-Download the Linux zip file, then unzip the program, and use nano to create `fastgateway.service`
+Download the Linux archive from [Releases](../../releases), extract it (for example to `/opt/fastgateway`), then create `fastgateway.service`:
 
 ```shell
 nano /etc/systemd/system/fastgateway.service
 ```
 
-Remember to replace the configuration when filling in the following content:
+Replace paths and secrets in the unit file:
 
-```tex
+```ini
 [Unit]
 Description=FastGateway
 
@@ -174,52 +218,28 @@ Description=FastGateway
 WorkingDirectory=/opt/fastgateway
 ExecStart=/opt/fastgateway/FastGateway
 Restart=always
-# Restart service after 10 seconds if the dotnet service crashes:
 RestartSec=10
 KillSignal=SIGINT
 SyslogIdentifier=dotnet-fastgateway
 User=root
 Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=PASSWORD=change-this-password
+Environment=TunnelToken=change-this-tunnel-token
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Next, reload systemd to make the new service unit file take effect:
+Reload systemd and start the service:
 
 ```shell
 systemctl daemon-reload
-```
-
-Now you can start the service:
-
-```shell
 systemctl start fastgateway.service
-```
-
-To enable the service to start automatically at system boot, enable it:
-
-```shell
 systemctl enable fastgateway.service
-```
-
-You can check the status of the service with the following command:
-
-```shell
 systemctl status fastgateway.service
 ```
 
-If you need to stop the service, you can use:
-
-```shell
-systemctl stop fastgateway.service
-```
-
-If you have made changes to the service and need to reload the configuration, you can restart the service:
-
-```shell
-systemctl restart fastgateway.service
-```
+Stop or restart with `systemctl stop fastgateway.service` and `systemctl restart fastgateway.service`.
 
 ## Development and Build
 
