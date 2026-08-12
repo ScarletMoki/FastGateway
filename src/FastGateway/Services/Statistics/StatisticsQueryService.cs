@@ -50,9 +50,13 @@ public static class StatisticsQueryService
     {
         var info = ResolveRange(range);
         var hostFilter = host ?? string.Empty;
-        var result = new StatisticsOverviewDto { DroppedEntries = StatisticsCollector.DroppedCount };
+        var result = new StatisticsOverviewDto
+        {
+            Available = StatisticsDb.IsAvailable,
+            DroppedEntries = StatisticsCollector.DroppedCount
+        };
 
-        if (!StatisticsDb.IsAvailable) return result;
+        if (!result.Available) return result;
 
         using var connection = StatisticsDb.OpenReadConnection();
 

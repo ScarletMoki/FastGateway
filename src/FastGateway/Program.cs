@@ -18,6 +18,10 @@ public static class Program
     {
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
+        // Native AOT 会裁掉 SQLitePCLRaw 的模块初始化器；必须在任何 SQLite 操作之前
+        // 显式加载 e_sqlite3，否则 stats.db 打不开，仪表盘会静默变成「暂无数据」。
+        SQLitePCL.Batteries_V2.Init();
+
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
             ContentRootPath = AppContext.BaseDirectory,
@@ -128,6 +132,9 @@ public static class Program
 
         // 集群数据面隧道：从节点出站注册，供跨节点请求中继（NodeToken 鉴权）
         app.Map(ClusterTunnelHub.EndpointPath, tunnel => tunnel.Run(ClusterTunnelHub.HandleAsync));
+
+        StatisticsDb.Initialize(app.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("StatisticsDb"));
 
         app.MapDomain()
             .MapBlacklistAndWhitelist()

@@ -39,6 +39,8 @@
         <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
         <PackageReference Include="System.IO.Hashing" Version="10.0.10" />
         <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+        <!-- Native AOT 不要裁掉 SQLite 原生提供者，否则 Batteries.Init 之后仍可能找不到 e_sqlite3 -->
+        <TrimmerRootAssembly Include="SQLitePCLRaw.provider.e_sqlite3" />
     </ItemGroup>
 
     <!-- PerformanceCounter：仅 Windows 目标引用（AOT 不兼容，见 WINDOWS 常量隔离） -->

@@ -2,6 +2,9 @@ namespace FastGateway.Dto;
 
 public sealed class StatisticsOverviewDto
 {
+    /// <summary>统计库是否可用。false 时其余字段均为空，前端应提示服务降级而不是「暂无数据」。</summary>
+    public bool Available { get; set; }
+
     public long Requests { get; set; }
     public long PageViews { get; set; }
     public long UniqueVisitors { get; set; }

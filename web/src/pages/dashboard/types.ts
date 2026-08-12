@@ -1,6 +1,7 @@
 export type StatRange = "1h" | "24h" | "7d" | "30d";
 
 export interface StatisticsOverview {
+  available?: boolean;
   requests: number;
   pageViews: number;
   uniqueVisitors: number;

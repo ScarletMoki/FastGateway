@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Activity, MonitorSmartphone, PieChart, ShieldAlert } from "lucide-react";
 import { Reveal, Stagger, StaggerItem, SwapFade } from "@/components/motion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AreaChart } from "@/components/ui/area-chart";
@@ -98,6 +99,14 @@ export default function TrafficTab() {
     // stagger 的粒度是「卡片」而不是「卡片内的格子」：下面两张 Card 的分隔线是
     // 每个 StatTile 自己的 border-left，逐格错峰会让 12 条分隔线参差错动
     <Stagger className="space-y-4">
+      {overview?.available === false && (
+        <Alert variant="destructive">
+          <AlertTitle>统计服务不可用</AlertTitle>
+          <AlertDescription>
+            统计数据库未能启动，仪表盘无法记录流量（网关转发不受影响）。请查看运行日志里的「统计数据库初始化失败」，并确认 data 目录可写。
+          </AlertDescription>
+        </Alert>
+      )}
       {/* 指标条 + 实时QPS */}
       <StaggerItem className="grid gap-4 xl:grid-cols-[1fr_280px]">
         <div className="space-y-4">

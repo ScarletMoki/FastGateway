@@ -50,7 +50,9 @@ public static class StatisticsDb
             {
                 // 统计库不可用只降级统计功能，绝不影响代理转发
                 IsAvailable = false;
-                logger?.LogError(ex, "统计数据库初始化失败，统计功能已降级");
+                logger?.LogError(ex, "统计数据库初始化失败（{DbPath}），统计功能已降级", DbPath);
+                if (logger == null)
+                    Console.Error.WriteLine($"统计数据库初始化失败（{DbPath}）：{ex}");
             }
             finally
             {
