@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { Reveal } from "@/components/motion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
@@ -104,7 +105,7 @@ const BlockedLogPage = memo(() => {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <Reveal className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <ScrollText className="h-6 w-6 text-primary" />
@@ -113,8 +114,9 @@ const BlockedLogPage = memo(() => {
           <p className="mt-2 text-muted-foreground">按时间、来源、原因追溯每一次被拦截的请求，用于安全审计与复盘。</p>
         </div>
         <SecurityFilterBar />
-      </div>
+      </Reveal>
 
+      <Reveal index={1}>
       <Card className="border shadow-sm">
         <CardHeader className="border-b bg-muted/50">
           <CardTitle className="text-lg font-semibold">被拦截请求</CardTitle>
@@ -136,6 +138,7 @@ const BlockedLogPage = memo(() => {
           </div>
         </CardContent>
       </Card>
+      </Reveal>
     </div>
   );
 });

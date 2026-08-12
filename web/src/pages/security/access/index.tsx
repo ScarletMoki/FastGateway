@@ -1,4 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
+import { motion } from "motion/react";
+import { Reveal, TRANSITION } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 import { message } from "@/utils/toast";
 import CreateBlacklistAndWhitelist from "@/pages/protect-config/features/CreateBlacklistAndWhitelist";
@@ -125,7 +127,7 @@ const AccessControlPage = memo(() => {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <Reveal className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">访问控制</h1>
           <p className="mt-2 text-muted-foreground">统一管理 IP 黑名单与白名单，控制哪些来源可以访问网关。</p>
@@ -134,10 +136,10 @@ const AccessControlPage = memo(() => {
           <Plus className="mr-2 h-4 w-4" />
           新增{isBlacklist ? "黑名单" : "白名单"}
         </Button>
-      </div>
+      </Reveal>
 
       {/* 生效优先级说明 */}
-      <div className="mb-6 rounded-lg border bg-muted/40 p-4">
+      <Reveal index={1} className="mb-6 rounded-lg border bg-muted/40 p-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-medium">
           <ShieldCheck className="h-4 w-4 text-primary" />
           生效优先级
@@ -158,37 +160,52 @@ const AccessControlPage = memo(() => {
         <p className="mt-3 text-xs text-muted-foreground">
           白名单启用后仅名单内 IP 可访问；黑名单<span className="font-medium text-foreground">强制启用、不可关闭</span>，用于阻断已知恶意来源。
         </p>
-      </div>
+      </Reveal>
 
-      {/* 黑 / 白名单切换 */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* 黑 / 白名单切换：layoutId 滑块跟随选中项移动 */}
+      <Reveal index={2} className="mb-4 flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-lg border bg-muted/40 p-1">
           <button
             onClick={() => switchKind("deny")}
             className={cn(
-              "flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
-              isBlacklist ? "bg-background text-destructive shadow-sm" : "text-muted-foreground hover:text-foreground"
+              "relative flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+              isBlacklist ? "text-destructive" : "text-muted-foreground hover:text-foreground"
             )}
           >
-            <Ban className="h-4 w-4" />
-            黑名单
+            {isBlacklist && (
+              <motion.span
+                layoutId="access-kind-indicator"
+                className="absolute inset-0 rounded-md bg-background shadow-sm"
+                transition={TRANSITION.layout}
+              />
+            )}
+            <Ban className="relative h-4 w-4" />
+            <span className="relative">黑名单</span>
           </button>
           <button
             onClick={() => switchKind("allow")}
             className={cn(
-              "flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
-              !isBlacklist ? "bg-background text-green-600 shadow-sm dark:text-green-400" : "text-muted-foreground hover:text-foreground"
+              "relative flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+              !isBlacklist ? "text-green-600 dark:text-green-400" : "text-muted-foreground hover:text-foreground"
             )}
           >
-            <ShieldCheck className="h-4 w-4" />
-            白名单
+            {!isBlacklist && (
+              <motion.span
+                layoutId="access-kind-indicator"
+                className="absolute inset-0 rounded-md bg-background shadow-sm"
+                transition={TRANSITION.layout}
+              />
+            )}
+            <ShieldCheck className="relative h-4 w-4" />
+            <span className="relative">白名单</span>
           </button>
         </div>
         <span className="text-sm text-muted-foreground">
           {isBlacklist ? "黑名单强制生效，用于阻断已知恶意来源。" : "白名单启用后，仅名单内 IP 可访问该服务。"}
         </span>
-      </div>
+      </Reveal>
 
+      <Reveal index={3}>
       <Card className="border shadow-sm">
         <CardHeader className="border-b bg-muted/50">
           <CardTitle className="text-lg font-semibold">{isBlacklist ? "IP 黑名单" : "IP 白名单"}</CardTitle>
@@ -210,6 +227,7 @@ const AccessControlPage = memo(() => {
           </div>
         </CardContent>
       </Card>
+      </Reveal>
 
       <CreateBlacklistAndWhitelist
         isBlacklist={isBlacklist}

@@ -1,7 +1,9 @@
 ﻿using Core.Entities.Core;
+using MessagePack;
 
 namespace Core.Entities;
 
+[MessagePackObject(true)]
 public sealed class Cert
 {
     public string Id { get; set; }
@@ -54,6 +56,7 @@ public sealed class Cert
 }
 
 
+[MessagePackObject(true)]
 public class CertData
 {
     public string File { get; set; }

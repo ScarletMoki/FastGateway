@@ -1,10 +1,12 @@
 ﻿using Core.Entities.Core;
+using MessagePack;
 
 namespace Core.Entities;
 
 /// <summary>
 /// 域名解析
 /// </summary>
+[MessagePackObject(true)]
 public sealed class DomainName
 {
     /// <summary>

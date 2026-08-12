@@ -22,24 +22,21 @@ public class PerformanceMonitoringMiddleware
             return;
         }
 
-        var stopwatch = Stopwatch.StartNew();
+        // GetTimestamp 免去每请求一个 Stopwatch 对象分配
+        var start = Stopwatch.GetTimestamp();
 
         try
         {
             // 记录请求开始
             QpsService.IncrementServiceRequests();
-            
+
             await _next(context);
-            
-            // 请求成功完成
-            stopwatch.Stop();
-            QpsService.RecordSuccessRequest(stopwatch.ElapsedMilliseconds);
+
+            QpsService.RecordSuccessRequest((long)Stopwatch.GetElapsedTime(start).TotalMilliseconds);
         }
         catch (Exception)
         {
-            // 请求失败
-            stopwatch.Stop();
-            QpsService.RecordFailedRequest(stopwatch.ElapsedMilliseconds);
+            QpsService.RecordFailedRequest((long)Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             throw;
         }
     }

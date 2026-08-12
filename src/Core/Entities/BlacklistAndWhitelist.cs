@@ -1,8 +1,11 @@
-﻿namespace Core.Entities;
+﻿using MessagePack;
+
+namespace Core.Entities;
 
 /// <summary>
 /// 黑白名单
 /// </summary>
+[MessagePackObject(true)]
 public sealed class BlacklistAndWhitelist
 {
     /// <summary>

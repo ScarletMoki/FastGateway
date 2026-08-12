@@ -1,4 +1,5 @@
 import  { useEffect, useState } from 'react';
+import { Reveal, Stagger, StaggerItem } from '@/components/motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -71,7 +72,7 @@ const TunnelPage = () => {
     return (
         <div className="p-6 space-y-6">
             {/* 页面头部 */}
-            <div className="flex items-center justify-between">
+            <Reveal className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-semibold text-foreground">节点管理</h1>
                     <p className="text-muted-foreground mt-1">管理隧道节点和代理配置</p>
@@ -84,7 +85,7 @@ const TunnelPage = () => {
                     <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                     刷新
                 </Button>
-            </div>
+            </Reveal>
 
             <Separator />
 
@@ -99,9 +100,10 @@ const TunnelPage = () => {
                     <p>暂无节点数据</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <Stagger className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {tunnels.map((tunnel) => (
-                        <Card key={tunnel.name} className="hover:shadow-lg transition-shadow bg-card border-border">
+                        <StaggerItem key={tunnel.name} hoverLift className="h-full rounded-xl">
+                        <Card className="h-full hover:shadow-lg transition-shadow bg-card border-border">
                             <CardHeader className="pb-3">
                                 <div className="flex items-center justify-between">
                                     <CardTitle className="text-lg font-semibold text-foreground">
@@ -160,8 +162,9 @@ const TunnelPage = () => {
                                 </div>
                             </CardContent>
                         </Card>
+                        </StaggerItem>
                     ))}
-                </div>
+                </Stagger>
             )}
 
             <TunnelDetailModal 

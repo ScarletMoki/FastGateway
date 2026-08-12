@@ -1,5 +1,6 @@
 ﻿import { deleteServer, enableServer, getServers, onlineServer, reloadServer } from "@/services/ServerService";
 import { getClientIpSourceShortLabel, Server } from "@/types";
+import { Reveal, Stagger, StaggerItem, TRANSITION } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -438,7 +439,7 @@ const ProxyList = memo(() => {
     };
 
     return (
-        <div className="space-y-4">
+        <Reveal delay={0.08} className="space-y-4">
             <Card className="border-border/60">
                 <CardHeader className="space-y-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -678,13 +679,18 @@ const ProxyList = memo(() => {
                             </Button>
                         </div>
                     ) : (
-                        <div className="grid gap-3">
+                        <Stagger className="grid gap-3">
                             {filteredServers.map((server) => (
-                                <div key={server.id ?? server.name}>
+                                // layout：筛选/排序变化时平滑重排而不是瞬移
+                                <StaggerItem
+                                    key={server.id ?? server.name}
+                                    layout
+                                    transition={TRANSITION.layout}
+                                >
                                     {renderServerRow(server)}
-                                </div>
+                                </StaggerItem>
                             ))}
-                        </div>
+                        </Stagger>
                     )}
                 </CardContent>
             </Card>
@@ -771,7 +777,7 @@ const ProxyList = memo(() => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </Reveal>
     );
 });
 

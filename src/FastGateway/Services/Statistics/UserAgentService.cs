@@ -11,19 +11,27 @@ public static class UserAgentService
 
     private const int CacheLimit = 10_000;
 
-    private static readonly Dictionary<string, (string Os, string Browser)> Cache = new();
+    // 两代缓存：写满后整体降为旧代而非清空，热点 UA 命中旧代时晋升回新代，
+    // 避免 Clear 造成的周期性全量重解析
+    private static Dictionary<string, (string Os, string Browser)> _cache = new();
+    private static Dictionary<string, (string Os, string Browser)> _previousCache = new();
 
     public static (string Os, string Browser) Parse(string? userAgent)
     {
         if (string.IsNullOrWhiteSpace(userAgent)) return (Unknown, Unknown);
 
-        if (Cache.TryGetValue(userAgent, out var cached)) return cached;
+        if (_cache.TryGetValue(userAgent, out var cached)) return cached;
 
-        var result = ParseCore(userAgent);
+        if (!_previousCache.TryGetValue(userAgent, out cached)) cached = ParseCore(userAgent);
 
-        if (Cache.Count >= CacheLimit) Cache.Clear();
-        Cache[userAgent] = result;
-        return result;
+        if (_cache.Count >= CacheLimit)
+        {
+            _previousCache = _cache;
+            _cache = new Dictionary<string, (string Os, string Browser)>(CacheLimit);
+        }
+
+        _cache[userAgent] = cached;
+        return cached;
     }
 
     private static (string Os, string Browser) ParseCore(string userAgent)

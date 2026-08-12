@@ -69,12 +69,18 @@ public static class ClientIpHelper
     private static bool TryGetHeaderIp(HttpContext context, string headerName, out string ip)
     {
         ip = string.Empty;
-        if (!context.Request.Headers.TryGetValue(headerName, out var headerValue)) return false;
+        if (!context.Request.Headers.TryGetValue(headerName, out var headerValue) || headerValue.Count == 0)
+            return false;
 
-        var raw = headerValue.ToString();
-        if (string.IsNullOrWhiteSpace(raw)) return false;
+        // 客户端 IP 位于首个头值的首段，直接按 Span 切片，避免 ToString 拼接与 Split 分配
+        var raw = headerValue[0];
+        if (string.IsNullOrEmpty(raw)) return false;
 
-        return TryParseIp(raw.Split(',')[0].Trim(), out ip);
+        var span = raw.AsSpan();
+        var comma = span.IndexOf(',');
+        if (comma >= 0) span = span[..comma];
+
+        return TryParseIp(span.Trim(), out ip);
     }
 
     private static string GetRemoteIp(HttpContext context)
@@ -83,10 +89,10 @@ public static class ClientIpHelper
         return remote == null ? string.Empty : Normalize(remote);
     }
 
-    private static bool TryParseIp(string raw, out string ip)
+    private static bool TryParseIp(ReadOnlySpan<char> raw, out string ip)
     {
         ip = string.Empty;
-        if (string.IsNullOrWhiteSpace(raw))
+        if (raw.IsEmpty)
         {
             return false;
         }

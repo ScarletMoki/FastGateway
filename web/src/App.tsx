@@ -21,6 +21,7 @@ const AboutPage = lazy(PAGE_LOADERS['/about'])
 const FileStoragePage = lazy(PAGE_LOADERS['/filestorage'])
 const DashboardPage = lazy(PAGE_LOADERS['/dashboard'])
 const TunnelPage = lazy(PAGE_LOADERS['/tunnel'])
+const ClusterPage = lazy(PAGE_LOADERS['/cluster'])
 const StreamForwardPage = lazy(PAGE_LOADERS['/stream-forward'])
 const SystemSettingPage = lazy(PAGE_LOADERS['/setting'])
 
@@ -144,6 +145,12 @@ const router = createBrowserRouter([
             path: 'tunnel',
             element: <Suspense fallback={<Loading fullscreen={false} />}>
               <TunnelPage />
+            </Suspense>
+          },
+          {
+            path: 'cluster',
+            element: <Suspense fallback={<Loading fullscreen={false} />}>
+              <ClusterPage />
             </Suspense>
           },
           {

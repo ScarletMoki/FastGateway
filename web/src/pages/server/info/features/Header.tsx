@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
+import { Reveal } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -51,7 +52,7 @@ export default function Header() {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <Reveal className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                 <div className="space-y-2">
                     <Breadcrumb>
                         <BreadcrumbList>
@@ -118,7 +119,7 @@ export default function Header() {
                         新增路由
                     </Button>
                 </div>
-            </div>
+            </Reveal>
 
             <CreateDomain
                 visible={createVisible}

@@ -15,6 +15,7 @@ export const PAGE_LOADERS = {
   "/server/:id": () => import("@/pages/server/info/page"),
   "/stream-forward": () => import("@/pages/stream-forward/page"),
   "/tunnel": () => import("@/pages/tunnel/page"),
+  "/cluster": () => import("@/pages/cluster/page"),
   "/security/overview": () => import("@/pages/security/overview"),
   "/security/access": () => import("@/pages/security/access"),
   "/security/rate-limit": () => import("@/pages/protect-config/rate-limit"),

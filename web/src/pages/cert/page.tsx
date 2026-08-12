@@ -23,6 +23,7 @@ import {
     DialogTitle,
 } from "@/components/animate-ui/components/ui/dialog";
 import { Input } from "@/components/animate-ui/components/ui/input";
+import { AnimatedNumber, Reveal, Stagger, StaggerItem } from "@/components/motion";
 import { cn } from "@/lib/utils";
 import { ApplyCert, DeleteCert, GetCert } from "@/services/CertService";
 import { message } from "@/utils/toast";
@@ -490,7 +491,7 @@ export default function CertPage() {
 
     return (
         <div className="space-y-6 p-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <Reveal className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                 <div className="space-y-1">
                     <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">
                         FastGateway
@@ -527,10 +528,11 @@ export default function CertPage() {
                         新增证书
                     </Button>
                 </div>
-            </div>
+            </Reveal>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <Card className="border-border/60">
+            <Stagger className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <StaggerItem hoverLift>
+                <Card className="h-full border-border/60">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-muted-foreground">
                             总证书
@@ -538,13 +540,15 @@ export default function CertPage() {
                     </CardHeader>
                     <CardContent className="space-y-1">
                         <div className="text-2xl font-semibold tabular-nums">
-                            {pagination.total}
+                            <AnimatedNumber value={pagination.total} />
                         </div>
                         <p className="text-xs text-muted-foreground">按分页接口统计总数</p>
                     </CardContent>
                 </Card>
+                </StaggerItem>
 
-                <Card className="border-border/60">
+                <StaggerItem hoverLift>
+                <Card className="h-full border-border/60">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-muted-foreground">
                             本页证书
@@ -552,13 +556,15 @@ export default function CertPage() {
                     </CardHeader>
                     <CardContent className="space-y-1">
                         <div className="text-2xl font-semibold tabular-nums">
-                            {stats.pageTotal}
+                            <AnimatedNumber value={stats.pageTotal} />
                         </div>
                         <p className="text-xs text-muted-foreground">已加载当前页数据量</p>
                     </CardContent>
                 </Card>
+                </StaggerItem>
 
-                <Card className="border-border/60">
+                <StaggerItem hoverLift>
+                <Card className="h-full border-border/60">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-muted-foreground">
                             自动续期
@@ -566,13 +572,15 @@ export default function CertPage() {
                     </CardHeader>
                     <CardContent className="space-y-1">
                         <div className="text-2xl font-semibold tabular-nums">
-                            {stats.autoRenewCount}
+                            <AnimatedNumber value={stats.autoRenewCount} />
                         </div>
                         <p className="text-xs text-muted-foreground">当前页启用自动续期</p>
                     </CardContent>
                 </Card>
+                </StaggerItem>
 
-                <Card className="border-border/60">
+                <StaggerItem hoverLift>
+                <Card className="h-full border-border/60">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-muted-foreground">
                             风险提示
@@ -581,7 +589,7 @@ export default function CertPage() {
                     <CardContent className="space-y-1">
                         <div className="flex items-baseline gap-3">
                             <div className="text-2xl font-semibold tabular-nums">
-                                {stats.expiringSoon}
+                                <AnimatedNumber value={stats.expiringSoon} />
                             </div>
                             <Badge
                                 variant="outline"
@@ -599,8 +607,10 @@ export default function CertPage() {
                         </p>
                     </CardContent>
                 </Card>
-            </div>
+                </StaggerItem>
+            </Stagger>
 
+            <Reveal delay={0.12}>
             <Card className="border-border/60">
                 <CardHeader className="space-y-2 pb-4">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -843,6 +853,7 @@ export default function CertPage() {
                     />
                 </CardContent>
             </Card>
+            </Reveal>
 
             <CreateCertPage
                 visible={createVisible}

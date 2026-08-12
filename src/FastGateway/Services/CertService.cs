@@ -77,6 +77,20 @@ public static class CertService
         foreach (var cert in certs) CertWebApplications.TryAdd(cert.Domain, cert);
     }
 
+    /// <summary>
+    ///     整体替换证书缓存并按域名失效 SNI 缓存（集群从节点应用主网关快照时使用）
+    /// </summary>
+    public static void ReplaceCerts(Cert[] certs)
+    {
+        var oldDomains = CertWebApplications.Keys.ToArray();
+
+        CertWebApplications.Clear();
+        foreach (var cert in certs) CertWebApplications.TryAdd(cert.Domain, cert);
+
+        foreach (var domain in oldDomains.Concat(certs.Select(c => c.Domain)).Distinct())
+            Gateway.Gateway.InvalidateCertificate(domain);
+    }
+
     public static async ValueTask<AcmeContext> RegisterWithLetsEncrypt(string email)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "data/keys");

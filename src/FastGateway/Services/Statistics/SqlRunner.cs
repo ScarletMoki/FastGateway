@@ -68,6 +68,7 @@ internal static class SqlRunner
     /// <summary>
     ///     批量执行同一条 SQL（替代 Dapper 的 Execute(sql, IEnumerable)）：复用一条命令，
     ///     每个元素通过 bind 委托显式设置参数值后执行一次。
+    ///     bind 委托应使用 <see cref="SetParam"/>，首行创建参数对象后续各行仅更新值。
     /// </summary>
     public static void ExecuteBatch<T>(
         SqliteConnection connection, string sql, SqliteTransaction transaction,
@@ -81,10 +82,22 @@ internal static class SqlRunner
 
         foreach (var item in items)
         {
-            command.Parameters.Clear();
             bind(command, item);
             command.ExecuteNonQuery();
         }
+    }
+
+    /// <summary>
+    ///     设置命名参数：已存在则复用参数对象仅更新值，避免批量写入时每行重建参数集合。
+    /// </summary>
+    public static void SetParam(this SqliteCommand command, string name, object? value)
+    {
+        var parameters = command.Parameters;
+        var index = parameters.IndexOf(name);
+        if (index >= 0)
+            parameters[index].Value = value ?? DBNull.Value;
+        else
+            parameters.AddWithValue(name, value ?? DBNull.Value);
     }
 
     // ===== 类型安全的列读取（按序号，处理 NULL）=====

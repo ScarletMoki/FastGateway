@@ -14,7 +14,12 @@ public sealed class QpsItem
     private long _totalRequests;
     private long _successRequests;
     private long _failedRequests;
-    private readonly ConcurrentQueue<long> _responseTimes = new();
+
+    // 响应时间环形缓冲：容量 2 的幂，写入方仅一次 Interlocked + 数组写，
+    // 替代 ConcurrentQueue 的节点分配与 O(n) Count 修剪
+    private const int ResponseTimeCapacity = 1024;
+    private readonly long[] _responseTimes = new long[ResponseTimeCapacity];
+    private long _responseTimeSequence;
 
     // 3s window tracking (lock-free)
     private long _windowRequestCount; // requests accumulated in current window
@@ -82,12 +87,8 @@ public sealed class QpsItem
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RecordResponseTime(long milliseconds)
     {
-        _responseTimes.Enqueue(milliseconds);
-        // Keep queue size <= 1000
-        while (_responseTimes.Count > 1000)
-        {
-            _responseTimes.TryDequeue(out _);
-        }
+        var seq = Interlocked.Increment(ref _responseTimeSequence) - 1;
+        Volatile.Write(ref _responseTimes[seq & (ResponseTimeCapacity - 1)], milliseconds);
     }
 
     // Manual trigger (e.g., timer) to ensure QPS updates even during idle periods
@@ -112,11 +113,15 @@ public sealed class QpsItem
 
     public ResponseTimeStats GetResponseTimeStats()
     {
-        var times = _responseTimes.ToArray();
-        if (times.Length == 0)
+        var count = (int)Math.Min(Interlocked.Read(ref _responseTimeSequence), ResponseTimeCapacity);
+        if (count == 0)
         {
             return new ResponseTimeStats(0, 0, 0, 0, 0);
         }
+
+        // 读侧仅为仪表盘每 3 秒轮询，快照后排序，无需与写侧强一致
+        var times = new long[count];
+        for (var i = 0; i < count; i++) times[i] = Volatile.Read(ref _responseTimes[i]);
 
         Array.Sort(times);
         var avg = (long)times.Average();

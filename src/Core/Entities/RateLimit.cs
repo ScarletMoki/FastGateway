@@ -1,8 +1,11 @@
-﻿namespace Core.Entities;
+﻿using MessagePack;
+
+namespace Core.Entities;
 
 /// <summary>
 /// 限流策略
 /// </summary>
+[MessagePackObject(true)]
 public sealed class RateLimit
 {
     public string Id { get; set; }

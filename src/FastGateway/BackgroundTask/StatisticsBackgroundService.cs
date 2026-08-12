@@ -31,6 +31,9 @@ public sealed class StatisticsBackgroundService(
     // 当日唯一集合（day → (host,kind) → 已写入哈希），避免重复写库
     private readonly Dictionary<int, Dictionary<(string Host, int Kind), HashSet<long>>> _uniqueSeen = new();
 
+    // 单个 (day, host, kind) 去重集合的内存上限（50 万条 long 的 HashSet 约 12MB）
+    private const int UniqueSeenLimit = 500_000;
+
     private long _lastCleanupTs;
     private int _batchesSinceMetaFlush;
 
@@ -279,23 +282,23 @@ public sealed class StatisticsBackgroundService(
                  @Os, @Browser, @VisitorHash, @RefererHost, @RefererUrl, @Blocked, @IsPage)
             """, transaction, rows, static (cmd, row) =>
             {
-                cmd.Parameters.AddWithValue("@Ts", row.Ts);
-                cmd.Parameters.AddWithValue("@ServerId", (object?)row.ServerId ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@Host", row.Host);
-                cmd.Parameters.AddWithValue("@Path", row.Path);
-                cmd.Parameters.AddWithValue("@Method", row.Method);
-                cmd.Parameters.AddWithValue("@Status", row.Status);
-                cmd.Parameters.AddWithValue("@ElapsedMs", row.ElapsedMs);
-                cmd.Parameters.AddWithValue("@Ip", row.Ip);
-                cmd.Parameters.AddWithValue("@Country", row.Country);
-                cmd.Parameters.AddWithValue("@Province", row.Province);
-                cmd.Parameters.AddWithValue("@Os", row.Os);
-                cmd.Parameters.AddWithValue("@Browser", row.Browser);
-                cmd.Parameters.AddWithValue("@VisitorHash", row.VisitorHash);
-                cmd.Parameters.AddWithValue("@RefererHost", row.RefererHost);
-                cmd.Parameters.AddWithValue("@RefererUrl", row.RefererUrl);
-                cmd.Parameters.AddWithValue("@Blocked", row.Blocked);
-                cmd.Parameters.AddWithValue("@IsPage", row.IsPage);
+                cmd.SetParam("@Ts", row.Ts);
+                cmd.SetParam("@ServerId", row.ServerId);
+                cmd.SetParam("@Host", row.Host);
+                cmd.SetParam("@Path", row.Path);
+                cmd.SetParam("@Method", row.Method);
+                cmd.SetParam("@Status", row.Status);
+                cmd.SetParam("@ElapsedMs", row.ElapsedMs);
+                cmd.SetParam("@Ip", row.Ip);
+                cmd.SetParam("@Country", row.Country);
+                cmd.SetParam("@Province", row.Province);
+                cmd.SetParam("@Os", row.Os);
+                cmd.SetParam("@Browser", row.Browser);
+                cmd.SetParam("@VisitorHash", row.VisitorHash);
+                cmd.SetParam("@RefererHost", row.RefererHost);
+                cmd.SetParam("@RefererUrl", row.RefererUrl);
+                cmd.SetParam("@Blocked", row.Blocked);
+                cmd.SetParam("@IsPage", row.IsPage);
             });
 
         ExecuteBatch(connection,
@@ -319,19 +322,19 @@ public sealed class StatisticsBackgroundService(
                 elapsed_sum = elapsed_sum + excluded.elapsed_sum
             """, transaction, buckets, static (cmd, pair) =>
             {
-                cmd.Parameters.AddWithValue("@Granularity", pair.Key.Granularity);
-                cmd.Parameters.AddWithValue("@Bucket", pair.Key.Bucket);
-                cmd.Parameters.AddWithValue("@Host", pair.Key.Host);
-                cmd.Parameters.AddWithValue("@Requests", pair.Value.Requests);
-                cmd.Parameters.AddWithValue("@PageViews", pair.Value.PageViews);
-                cmd.Parameters.AddWithValue("@Blocked", pair.Value.Blocked);
-                cmd.Parameters.AddWithValue("@Blocked403", pair.Value.Blocked403);
-                cmd.Parameters.AddWithValue("@Blocked429", pair.Value.Blocked429);
-                cmd.Parameters.AddWithValue("@Status2xx", pair.Value.Status2xx);
-                cmd.Parameters.AddWithValue("@Status3xx", pair.Value.Status3xx);
-                cmd.Parameters.AddWithValue("@Status4xx", pair.Value.Status4xx);
-                cmd.Parameters.AddWithValue("@Status5xx", pair.Value.Status5xx);
-                cmd.Parameters.AddWithValue("@ElapsedSum", pair.Value.ElapsedSum);
+                cmd.SetParam("@Granularity", pair.Key.Granularity);
+                cmd.SetParam("@Bucket", pair.Key.Bucket);
+                cmd.SetParam("@Host", pair.Key.Host);
+                cmd.SetParam("@Requests", pair.Value.Requests);
+                cmd.SetParam("@PageViews", pair.Value.PageViews);
+                cmd.SetParam("@Blocked", pair.Value.Blocked);
+                cmd.SetParam("@Blocked403", pair.Value.Blocked403);
+                cmd.SetParam("@Blocked429", pair.Value.Blocked429);
+                cmd.SetParam("@Status2xx", pair.Value.Status2xx);
+                cmd.SetParam("@Status3xx", pair.Value.Status3xx);
+                cmd.SetParam("@Status4xx", pair.Value.Status4xx);
+                cmd.SetParam("@Status5xx", pair.Value.Status5xx);
+                cmd.SetParam("@ElapsedSum", pair.Value.ElapsedSum);
             });
 
         ExecuteBatch(connection,
@@ -342,22 +345,22 @@ public sealed class StatisticsBackgroundService(
                 cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked
             """, transaction, dims, static (cmd, pair) =>
             {
-                cmd.Parameters.AddWithValue("@Bucket", pair.Key.Bucket);
-                cmd.Parameters.AddWithValue("@Host", pair.Key.Host);
-                cmd.Parameters.AddWithValue("@Type", pair.Key.Type);
-                cmd.Parameters.AddWithValue("@Key", pair.Key.Key);
-                cmd.Parameters.AddWithValue("@Cnt", pair.Value.Cnt);
-                cmd.Parameters.AddWithValue("@Blocked", pair.Value.Blocked);
+                cmd.SetParam("@Bucket", pair.Key.Bucket);
+                cmd.SetParam("@Host", pair.Key.Host);
+                cmd.SetParam("@Type", pair.Key.Type);
+                cmd.SetParam("@Key", pair.Key.Key);
+                cmd.SetParam("@Cnt", pair.Value.Cnt);
+                cmd.SetParam("@Blocked", pair.Value.Blocked);
             });
 
         ExecuteBatch(connection,
             "INSERT OR IGNORE INTO stat_unique_daily (day, host, kind, hash) VALUES (@Day, @Host, @Kind, @Hash)",
             transaction, uniques, static (cmd, u) =>
             {
-                cmd.Parameters.AddWithValue("@Day", u.Day);
-                cmd.Parameters.AddWithValue("@Host", u.Host);
-                cmd.Parameters.AddWithValue("@Kind", u.Kind);
-                cmd.Parameters.AddWithValue("@Hash", u.Hash);
+                cmd.SetParam("@Day", u.Day);
+                cmd.SetParam("@Host", u.Host);
+                cmd.SetParam("@Kind", u.Kind);
+                cmd.SetParam("@Hash", u.Hash);
             });
 
         transaction.Commit();
@@ -517,6 +520,14 @@ public sealed class StatisticsBackgroundService(
         {
             seen = [];
             byHostKind[(host, kind)] = seen;
+        }
+
+        // 内存封顶：超限后不再去重，直接写库交由 INSERT OR IGNORE 兜底，
+        // 防止超大流量站点单日 UV 集合无限膨胀
+        if (seen.Count >= UniqueSeenLimit)
+        {
+            uniques.Add(new UniqueRow(day, host, kind, hash));
+            return;
         }
 
         if (!seen.Add(hash)) return;

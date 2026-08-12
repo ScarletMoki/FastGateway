@@ -11,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AnimatedNumber, Reveal, Stagger, StaggerItem } from "@/components/motion";
 import { useServerStore } from "@/store/server";
 
 import CreateServer from "./CreateServer";
@@ -75,7 +76,7 @@ const Header = memo(() => {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <Reveal className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                 <div className="space-y-1">
                     <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">
                         FastGateway
@@ -107,33 +108,35 @@ const Header = memo(() => {
                         新增服务
                     </Button>
                 </div>
-            </div>
+            </Reveal>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Stagger className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {stats.map(({ key, label, value, description, tag, Icon }) => (
-                    <Card key={key} className="border-border/60">
-                        <CardHeader className="pb-2">
-                            <div className="flex items-center justify-between gap-3">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">
-                                    {label}
-                                </CardTitle>
-                                <Icon className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                        </CardHeader>
-                        <CardContent className="space-y-1">
-                            <div className="flex items-baseline justify-between gap-2">
-                                <div className="text-2xl font-semibold tabular-nums">
-                                    {value}
+                    <StaggerItem key={key} hoverLift>
+                        <Card className="h-full border-border/60">
+                            <CardHeader className="pb-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                                        {label}
+                                    </CardTitle>
+                                    <Icon className="h-4 w-4 text-muted-foreground" />
                                 </div>
-                                <Badge variant="outline" className="font-normal">
-                                    {tag}
-                                </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{description}</p>
-                        </CardContent>
-                    </Card>
+                            </CardHeader>
+                            <CardContent className="space-y-1">
+                                <div className="flex items-baseline justify-between gap-2">
+                                    <div className="text-2xl font-semibold tabular-nums">
+                                        <AnimatedNumber value={value} />
+                                    </div>
+                                    <Badge variant="outline" className="font-normal">
+                                        {tag}
+                                    </Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground">{description}</p>
+                            </CardContent>
+                        </Card>
+                    </StaggerItem>
                 ))}
-            </div>
+            </Stagger>
 
             <CreateServer
                 visible={createVisible}

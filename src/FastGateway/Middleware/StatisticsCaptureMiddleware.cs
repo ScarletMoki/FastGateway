@@ -56,7 +56,7 @@ public sealed class StatisticsCaptureMiddleware
             {
                 Ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ServerId = _serverId,
-                Host = request.Host.Host.ToLowerInvariant(),
+                Host = ToLowerFast(request.Host.Host),
                 Path = request.Path.Value ?? "/",
                 Method = request.Method,
                 Status = status,
@@ -72,6 +72,17 @@ public sealed class StatisticsCaptureMiddleware
         {
             // 统计采集绝不影响请求处理
         }
+    }
+
+    /// <summary>
+    ///     Host 几乎总是已小写（DNS 大小写不敏感、浏览器规范化），仅在确有大写字母时才分配新串。
+    /// </summary>
+    private static string ToLowerFast(string host)
+    {
+        foreach (var c in host)
+            if (char.IsAsciiLetterUpper(c))
+                return host.ToLowerInvariant();
+        return host;
     }
 
     /// <summary>

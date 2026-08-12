@@ -17,7 +17,10 @@ public static class GeoIpService
 
     private const int CacheLimit = 65_536;
 
-    private static readonly Dictionary<string, (string Country, string Province)> Cache = new();
+    // 两代缓存：写满后整体降为旧代而非清空，热点 IP 命中旧代时晋升回新代，
+    // 避免 Clear 后热点 IP 全量重查 xdb（仅统计后台单线程访问）
+    private static Dictionary<string, (string Country, string Province)> _cache = new();
+    private static Dictionary<string, (string Country, string Province)> _previousCache = new();
     private static ISearcher? _searcher;
     private static bool _loadFailed;
 
@@ -275,13 +278,18 @@ public static class GeoIpService
     {
         if (string.IsNullOrEmpty(ip)) return (Unknown, string.Empty);
 
-        if (Cache.TryGetValue(ip, out var cached)) return cached;
+        if (_cache.TryGetValue(ip, out var cached)) return cached;
 
-        var result = ResolveCore(ip);
+        if (!_previousCache.TryGetValue(ip, out cached)) cached = ResolveCore(ip);
 
-        if (Cache.Count >= CacheLimit) Cache.Clear();
-        Cache[ip] = result;
-        return result;
+        if (_cache.Count >= CacheLimit)
+        {
+            _previousCache = _cache;
+            _cache = new Dictionary<string, (string Country, string Province)>(CacheLimit);
+        }
+
+        _cache[ip] = cached;
+        return cached;
     }
 
     /// <summary>

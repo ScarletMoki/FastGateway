@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 
+import { Reveal } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -66,6 +67,7 @@ export default function SystemSettingPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
+      <Reveal>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -113,6 +115,7 @@ export default function SystemSettingPage() {
           </div>
         </CardContent>
       </Card>
+      </Reveal>
     </div>
   );
 }

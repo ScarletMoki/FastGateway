@@ -1,4 +1,6 @@
-﻿namespace Core.Entities;
+﻿using MessagePack;
+
+namespace Core.Entities;
 
 public enum ClientIpSource
 {
@@ -11,6 +13,7 @@ public enum ClientIpSource
 /// <summary>
 /// 服务
 /// </summary>
+[MessagePackObject(true)]
 public sealed class Server
 {
     public string Id { get; set; }

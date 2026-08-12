@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { Reveal } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 import { message } from "@/utils/toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -153,7 +154,7 @@ const ThreatDetectionPage = memo(() => {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6">
+      <Reveal className="mb-6">
         <div className="flex items-center gap-2">
           <Radar className="h-6 w-6 text-destructive" />
           <h1 className="text-3xl font-bold tracking-tight text-foreground">威胁检测</h1>
@@ -161,10 +162,11 @@ const ThreatDetectionPage = memo(() => {
         <p className="mt-2 text-muted-foreground">
           基于 {WINDOW_SECONDS} 秒滑动窗口自动识别高频错误来源，支持一键封禁或移出黑名单。
         </p>
-      </div>
+      </Reveal>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
         {/* 自动封禁规则 */}
+        <Reveal index={1}>
         <Card className="h-fit border shadow-sm">
           <CardHeader className="border-b bg-muted/50">
             <CardTitle className="text-base font-semibold">检测规则</CardTitle>
@@ -195,8 +197,10 @@ const ThreatDetectionPage = memo(() => {
             </div>
           </CardContent>
         </Card>
+        </Reveal>
 
         {/* 实时异常 IP */}
+        <Reveal index={2}>
         <Card className="border shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/50 space-y-0">
             <div>
@@ -222,6 +226,7 @@ const ThreatDetectionPage = memo(() => {
             </div>
           </CardContent>
         </Card>
+        </Reveal>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 import { Plus } from "lucide-react";
 
+import { Reveal } from "@/components/motion";
 import { Button } from "@/components/ui/button";
 
 import StreamForwardDialog from "./StreamForwardDialog";
@@ -13,7 +14,7 @@ const Header = memo(({ onCreated }: HeaderProps) => {
     const [createVisible, setCreateVisible] = useState(false);
 
     return (
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <Reveal className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="space-y-1">
                 <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">FastGateway</p>
                 <h2 className="text-3xl font-semibold tracking-tight">端口转发</h2>
@@ -35,7 +36,7 @@ const Header = memo(({ onCreated }: HeaderProps) => {
                     onCreated();
                 }}
             />
-        </div>
+        </Reveal>
     );
 });
 

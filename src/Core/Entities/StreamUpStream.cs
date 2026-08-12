@@ -1,8 +1,11 @@
+using MessagePack;
+
 namespace Core.Entities;
 
 /// <summary>
 /// L4 端口转发上游目标
 /// </summary>
+[MessagePackObject(true)]
 public sealed class StreamUpStream
 {
     /// <summary>

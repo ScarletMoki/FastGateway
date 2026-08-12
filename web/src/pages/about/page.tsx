@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { BookOpen, Cpu, Github, Info, RefreshCw, Server, Users } from "lucide-react";
 
+import { Reveal } from "@/components/motion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -278,6 +279,7 @@ export default function AboutPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
+      <Reveal>
       <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">FastGateway 控制台</p>
@@ -314,6 +316,7 @@ export default function AboutPage() {
           </Button>
         </div>
       </header>
+      </Reveal>
 
       {error ? (
         <Alert variant="destructive">
@@ -325,6 +328,7 @@ export default function AboutPage() {
         </Alert>
       ) : null}
 
+      <Reveal index={1}>
       <Tabs defaultValue="overview" className="w-full">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <TabsList className="w-full justify-start md:w-auto">
@@ -584,6 +588,7 @@ export default function AboutPage() {
           </Card>
         </TabsContent>
       </Tabs>
+      </Reveal>
     </div>
   );
 }

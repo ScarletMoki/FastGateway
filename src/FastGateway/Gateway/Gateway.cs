@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.AspNetCore.WebSockets;
+using Microsoft.Extensions.Primitives;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -406,8 +407,6 @@ public static class Gateway
 
             var (routes, clusters) = BuildConfig(domainNames, server);
 
-            builder.Services.AddRateLimitService(rateLimits);
-
             builder.Services.AddTunnel();
             builder.Services.AddSingleton<StandardForwarderHttpClientFactory>();
             builder.Services.AddSingleton<FastGatewayForwarderHttpClientFactory>();
@@ -466,34 +465,70 @@ public static class Gateway
                         var tryFiles = context.Cluster!.Metadata!.Select(p => p.Key).ToArray();
                         context.AddRequestTransform(async transformContext =>
                         {
-                            var response = transformContext.HttpContext.Response;
-                            var path = Path.Combine(root, transformContext.Path.Value![1..]);
+                            var httpContext = transformContext.HttpContext;
+                            var response = httpContext.Response;
 
-                            if (File.Exists(path))
+                            // FileInfo 单次 stat 同时拿到存在性/长度/修改时间，替代 File.Exists + 打开文件的两次系统调用
+                            var file = new FileInfo(Path.Combine(root, transformContext.Path.Value![1..]));
+
+                            if (!file.Exists)
                             {
-                                DefaultContentTypeProvider.TryGetContentType(path, out var contentType);
-                                response.Headers.ContentType = contentType;
+                                foreach (var tryFile in tryFiles)
+                                {
+                                    var candidate = new FileInfo(Path.Combine(root, tryFile));
+                                    if (!candidate.Exists) continue;
+                                    file = candidate;
+                                    break;
+                                }
+                            }
 
-                                await response.SendFileAsync(path);
+                            if (!file.Exists)
+                            {
+                                response.StatusCode = 404;
                                 return;
                             }
 
-                            // 搜索 try_files
-                            foreach (var tryFile in tryFiles)
+                            // HTTP 日期只有秒级精度，截断后再参与 ETag/If-Modified-Since 比较
+                            var lastModifiedTicks = file.LastWriteTimeUtc.Ticks;
+                            lastModifiedTicks -= lastModifiedTicks % TimeSpan.TicksPerSecond;
+                            var lastModified = new DateTimeOffset(lastModifiedTicks, TimeSpan.Zero);
+                            var etag = $"\"{lastModifiedTicks:x}-{file.Length:x}\"";
+
+                            var headers = response.Headers;
+                            headers.ETag = etag;
+                            headers.LastModified = lastModified.ToString("R");
+                            // 强制协商缓存：浏览器可缓存但每次需验证，命中返回 304 省掉响应体传输
+                            headers.CacheControl = "public, max-age=0, must-revalidate";
+
+                            var request = httpContext.Request;
+                            if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
                             {
-                                var tryPath = Path.Combine(root, tryFile);
-
-                                if (!File.Exists(tryPath)) continue;
-
-                                DefaultContentTypeProvider.TryGetContentType(tryPath, out var contentType);
-                                response.Headers.ContentType = contentType;
-
-                                await response.SendFileAsync(tryPath);
-
-                                return;
+                                var ifNoneMatch = request.Headers.IfNoneMatch;
+                                if (ifNoneMatch.Count > 0)
+                                {
+                                    if (IsEtagMatch(ifNoneMatch, etag))
+                                    {
+                                        response.StatusCode = StatusCodes.Status304NotModified;
+                                        return;
+                                    }
+                                }
+                                else if (request.Headers.IfModifiedSince.Count > 0 &&
+                                         DateTimeOffset.TryParse(request.Headers.IfModifiedSince.ToString(),
+                                             out var ifModifiedSince) &&
+                                         lastModified <= ifModifiedSince)
+                                {
+                                    response.StatusCode = StatusCodes.Status304NotModified;
+                                    return;
+                                }
                             }
 
-                            response.StatusCode = 404;
+                            DefaultContentTypeProvider.TryGetContentType(file.FullName, out var contentType);
+                            headers.ContentType = contentType;
+                            response.ContentLength = file.Length;
+
+                            if (HttpMethods.IsHead(request.Method)) return;
+
+                            await response.SendFileAsync(file.FullName);
                         });
                     }
 
@@ -506,8 +541,14 @@ public static class Gateway
 
             app.UseWebSockets();
 
+            // 压缩只对静态文件路由生效：代理转发的动态内容透传上游的 Content-Encoding，
+            // 避免网关为上游未压缩的大响应白白消耗 CPU（WebApplication 会在用户中间件前
+            // 自动插入路由中间件，此处能拿到 YARP 路由端点的元数据）
             if (server.StaticCompress)
-                app.UseResponseCompression();
+                app.UseWhen(
+                    ctx => ctx.GetEndpoint()?.Metadata.GetMetadata<RouteModel>()?.Config.Metadata
+                        ?.ContainsKey(Root) == true,
+                    branch => branch.UseResponseCompression());
 
             if (is80)
                 // 用于HTTPS证书签名校验
@@ -649,17 +690,26 @@ public static class Gateway
         }
     }
 
+    /// <summary>
+    ///     Alt-Svc 头按端口预生成（每网关端口固定，避免每请求字符串拼接）
+    /// </summary>
+    private static readonly ConcurrentDictionary<int, string> AltSvcCache = new();
+
     private static WebApplication UseInitGatewayMiddleware(this WebApplication app)
     {
         app.Use(async (context, next) =>
         {
-            // 设置ip
+            // 覆写 X-Forwarded-For 为直连 IP：防止客户端伪造的 XFF 链透传给上游
             var ip = context.Connection.RemoteIpAddress;
             context.Request.Headers["X-Forwarded-For"] = ip?.ToString();
 
             if (context.Request.IsHttps)
-                // TODO: 由于h3需要对应请求的端口，所以这里需要动态设置
-                context.Response.Headers.AltSvc = "h3=\":" + (context.Request.Host.Port ?? 443) + "\"";
+            {
+                // h3 需要对应请求的端口；端口种类极少，按端口缓存完整头值
+                var port = context.Request.Host.Port ?? 443;
+                context.Response.Headers.AltSvc =
+                    AltSvcCache.GetOrAdd(port, static p => $"h3=\":{p}\"");
+            }
 
             await next(context);
 
@@ -667,6 +717,29 @@ public static class Gateway
         });
 
         return app;
+    }
+
+    /// <summary>
+    ///     If-None-Match 匹配：支持多值与 "*"，弱校验前缀 W/ 一并比对
+    /// </summary>
+    private static bool IsEtagMatch(StringValues ifNoneMatch, string etag)
+    {
+        for (var i = 0; i < ifNoneMatch.Count; i++)
+        {
+            var value = ifNoneMatch[i];
+            if (string.IsNullOrEmpty(value)) continue;
+            if (value == "*") return true;
+
+            var span = value.AsSpan();
+            foreach (var range in span.Split(','))
+            {
+                var candidate = span[range].Trim();
+                if (candidate.StartsWith("W/", StringComparison.Ordinal)) candidate = candidate[2..];
+                if (candidate.SequenceEqual(etag)) return true;
+            }
+        }
+
+        return false;
     }
 
     private static HttpClientConfig CreateHttpClientConfig()

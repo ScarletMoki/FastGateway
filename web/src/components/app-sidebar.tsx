@@ -4,6 +4,7 @@ import { motion } from "motion/react"
 import type { LucideIcon } from "lucide-react"
 import {
   Activity,
+  Boxes,
   FileText,
   Gauge,
   Globe,
@@ -60,6 +61,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: "server", title: "服务管理", to: "/server", icon: Globe },
       { key: "stream-forward", title: "端口转发", to: "/stream-forward", icon: Waypoints },
       { key: "tunnel", title: "节点管理", to: "/tunnel", icon: Network },
+      { key: "cluster", title: "集群管理", to: "/cluster", icon: Boxes },
     ],
   },
   {

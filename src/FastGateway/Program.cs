@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using FastGateway.BackgroundTask;
+using FastGateway.Cluster;
 using FastGateway.Infrastructure;
 using FastGateway.Middleware;
 using FastGateway.Options;
@@ -71,12 +72,17 @@ public static class Program
         builder.Services.AddHostedService<RenewSslBackgroundService>();
         builder.Services.AddHostedService<StatisticsBackgroundService>();
         builder.Services.AddSingleton<ConfigurationService>();
+        builder.Services.AddSingleton<ClusterStateService>();
+        builder.Services.AddHostedService<ClusterNodeAgentService>();
 
         var app = builder.Build();
 
         using (var scope = app.Services.CreateScope())
         {
             var configService = scope.ServiceProvider.GetRequiredService<ConfigurationService>();
+
+            // 集群中枢：订阅配置变更，主网关角色下自动向从节点推送
+            ClusterHub.Initialize(configService, scope.ServiceProvider.GetRequiredService<ClusterStateService>());
 
             var certs = configService.GetActiveCerts();
             CertService.InitCert(certs);
@@ -116,6 +122,9 @@ public static class Program
         app.UseAuthentication();
         app.UseAuthorization();
 
+        // 集群同步通道使用 WebSocket
+        app.UseWebSockets();
+
         app.MapDomain()
             .MapBlacklistAndWhitelist()
             .MapAbnormalIp()
@@ -129,6 +138,7 @@ public static class Program
             .MapStreamForward()
             .MapTunnel()
             .MapSystem()
+            .MapCluster()
             .MapStatistics();
 
         await app.RunAsync();

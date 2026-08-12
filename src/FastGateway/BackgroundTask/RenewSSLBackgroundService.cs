@@ -1,4 +1,5 @@
 ﻿using Core.Entities.Core;
+using FastGateway.Cluster;
 using FastGateway.Services;
 
 namespace FastGateway.BackgroundTask;
@@ -19,6 +20,15 @@ public class RenewSslBackgroundService(ILogger<RenewSslBackgroundService> logger
             {
                 await using (var scope = serviceProvider.CreateAsyncScope())
                 {
+                    // 集群从节点的证书由主网关统一签发并随配置下发，本地不得重复向 ACME 续期，
+                    // 否则会与主网关竞争验证并触发 Let's Encrypt 频率限制
+                    var clusterState = scope.ServiceProvider.GetRequiredService<ClusterStateService>();
+                    if (clusterState.Get().Role == ClusterRole.Worker)
+                    {
+                        await Task.Delay(1000 * 60 * 60, stoppingToken);
+                        continue;
+                    }
+
                     var configService = scope.ServiceProvider.GetRequiredService<ConfigurationService>();
 
                     // 查询所有需要续期的证书

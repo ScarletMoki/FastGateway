@@ -1,6 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 using Core.Entities;
 using Core.Entities.Core;
+using FastGateway.Cluster;
 using FastGateway.Dto;
 using FastGateway.Services;
 using FastGateway.Tunnels;
@@ -114,6 +115,18 @@ namespace FastGateway.Infrastructure;
 [JsonSerializable(typeof(DestinationHealthDto))]
 [JsonSerializable(typeof(DestinationHealthDto[]))]
 [JsonSerializable(typeof(DestinationHealthStateDto))]
+// ===== 集群 =====
+[JsonSerializable(typeof(ClusterRole))]
+[JsonSerializable(typeof(ClusterStateDto))]
+[JsonSerializable(typeof(ClusterNodeDto))]
+[JsonSerializable(typeof(List<ClusterNodeDto>))]
+[JsonSerializable(typeof(GenerateInviteInput))]
+[JsonSerializable(typeof(GenerateInviteResult))]
+[JsonSerializable(typeof(ClusterInviteCode))]
+[JsonSerializable(typeof(JoinClusterInput))]
+[JsonSerializable(typeof(RegisterNodeInput))]
+[JsonSerializable(typeof(RegisterNodeResult))]
+// 注：ClusterMessage/ClusterConfigPayload/ClusterCertFile 走 MessagePack 二进制（见 ClusterProtocol），不注册 JSON
 // ===== 网关内部 / 错误响应 =====
 [JsonSerializable(typeof(CodeMessageDto))]
 [JsonSerializable(typeof(ProxyErrorDto))]

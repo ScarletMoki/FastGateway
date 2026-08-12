@@ -1,10 +1,12 @@
 using Core.Entities.Core;
+using MessagePack;
 
 namespace Core.Entities;
 
 /// <summary>
 /// L4 端口转发规则（TCP/UDP 裸转发，类似 nginx stream / iptables DNAT）
 /// </summary>
+[MessagePackObject(true)]
 public sealed class StreamForward
 {
     public string Id { get; set; }

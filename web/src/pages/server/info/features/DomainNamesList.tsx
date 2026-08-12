@@ -20,6 +20,7 @@ import {
 import { useParams } from "react-router-dom";
 import { deleteDomain, enableService, getDomains } from "@/services/DomainNameService";
 import UpdateDomain from "./UpdateDomain";
+import { Reveal, Stagger, StaggerItem } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -471,7 +472,7 @@ const DomainNamesList = memo(() => {
     };
 
     return (
-        <div className="space-y-4">
+        <Reveal delay={0.08} className="space-y-4">
             <Card className="border-border/60">
                 <CardHeader className="space-y-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -686,9 +687,13 @@ const DomainNamesList = memo(() => {
                             </Button>
                         </div>
                     ) : (
-                        <div className="divide-y">
-                            {filteredDomains.map(renderRow)}
-                        </div>
+                        <Stagger className="divide-y">
+                            {filteredDomains.map((item) => (
+                                <StaggerItem key={item.id ?? item.path}>
+                                    {renderRow(item)}
+                                </StaggerItem>
+                            ))}
+                        </Stagger>
                     )}
                 </CardContent>
             </Card>
@@ -796,7 +801,7 @@ const DomainNamesList = memo(() => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </Reveal>
     );
 });
 

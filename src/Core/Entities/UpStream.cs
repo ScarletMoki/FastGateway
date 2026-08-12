@@ -1,5 +1,8 @@
-﻿namespace Core.Entities;
+﻿using MessagePack;
 
+namespace Core.Entities;
+
+[MessagePackObject(true)]
 public sealed class UpStream
 {
     /// <summary>

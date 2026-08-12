@@ -101,6 +101,8 @@ public static class StatisticsDb
             );
             CREATE INDEX IF NOT EXISTS idx_request_log_ts      ON request_log (ts);
             CREATE INDEX IF NOT EXISTS idx_request_log_host_ts ON request_log (host, ts);
+            -- 部分索引：拦截记录占比极低，安全页"仅看拦截"/攻击 IP 统计走此索引避免全表扫
+            CREATE INDEX IF NOT EXISTS idx_request_log_blocked_ts ON request_log (ts) WHERE blocked != 0;
 
             CREATE TABLE IF NOT EXISTS stat_bucket (
                 granularity  INTEGER NOT NULL,

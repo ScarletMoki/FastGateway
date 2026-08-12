@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { AnimatedNumber, Reveal, Stagger, StaggerItem } from "@/components/motion";
 import { Button } from '@/components/ui/button';
 import { GetRateLimit } from "@/services/RateLimitService";
 import CreateRateLimitPage from "./feautres/CreateRateLimit";
@@ -140,7 +141,7 @@ const RateLimitPage = memo(() => {
         <div className="container mx-auto py-8 px-4 md:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto">
                 {/* Header Section */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+                <Reveal className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
                     <div className="space-y-1">
                         <h1 className="text-3xl font-bold tracking-tight text-foreground">
                             限流策略
@@ -156,40 +157,53 @@ const RateLimitPage = memo(() => {
                         <Plus className="h-4 w-4 mr-2" />
                         创建限流策略
                     </Button>
-                </div>
+                </Reveal>
 
                 {/* 限流规则在网关构建时绑定，改动需重建后生效 */}
-                <div className="mb-6 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400">
+                <Reveal index={1} className="mb-6 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div>
                         <span className="font-medium text-foreground">限流规则在网关构建时绑定。</span>
                         <span className="text-muted-foreground"> 新增或修改策略后，需重建对应网关才会生效。</span>
                     </div>
-                </div>
+                </Reveal>
 
                 {/* Stats Cards */}
-                <div className="grid gap-4 md:grid-cols-3 mb-6">
-                    <Card className="border-l-4 border-l-blue-500">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">总策略数</CardTitle>
-                            <div className="text-2xl font-bold">{input.total}</div>
-                        </CardHeader>
-                    </Card>
-                    <Card className="border-l-4 border-l-green-500">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">已启用</CardTitle>
-                            <div className="text-2xl font-bold">{data.filter(item => item.enable).length}</div>
-                        </CardHeader>
-                    </Card>
-                    <Card className="border-l-4 border-l-orange-500">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">已禁用</CardTitle>
-                            <div className="text-2xl font-bold">{data.filter(item => !item.enable).length}</div>
-                        </CardHeader>
-                    </Card>
-                </div>
+                <Stagger delayChildren={0.08} className="grid gap-4 md:grid-cols-3 mb-6">
+                    <StaggerItem hoverLift>
+                        <Card className="h-full border-l-4 border-l-blue-500">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-sm font-medium text-muted-foreground">总策略数</CardTitle>
+                                <div className="text-2xl font-bold tabular-nums">
+                                    <AnimatedNumber value={input.total} />
+                                </div>
+                            </CardHeader>
+                        </Card>
+                    </StaggerItem>
+                    <StaggerItem hoverLift>
+                        <Card className="h-full border-l-4 border-l-green-500">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-sm font-medium text-muted-foreground">已启用</CardTitle>
+                                <div className="text-2xl font-bold tabular-nums">
+                                    <AnimatedNumber value={data.filter(item => item.enable).length} />
+                                </div>
+                            </CardHeader>
+                        </Card>
+                    </StaggerItem>
+                    <StaggerItem hoverLift>
+                        <Card className="h-full border-l-4 border-l-orange-500">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-sm font-medium text-muted-foreground">已禁用</CardTitle>
+                                <div className="text-2xl font-bold tabular-nums">
+                                    <AnimatedNumber value={data.filter(item => !item.enable).length} />
+                                </div>
+                            </CardHeader>
+                        </Card>
+                    </StaggerItem>
+                </Stagger>
 
                 {/* Main Content Card */}
+                <Reveal index={3}>
                 <Card className="overflow-hidden">
                     <CardHeader className="border-b bg-muted/50">
                         <div className="flex items-center justify-between">
@@ -221,6 +235,7 @@ const RateLimitPage = memo(() => {
                         </div>
                     </CardContent>
                 </Card>
+                </Reveal>
             </div>
             
             <CreateRateLimitPage 

@@ -23,6 +23,7 @@ import {
 } from "@/services/StreamForwardService";
 import { StreamForward, StreamLoadBalancing, StreamProtocol } from "@/types";
 
+import { Reveal, Stagger, StaggerItem } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -254,7 +255,7 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
     );
 
     return (
-        <div className="space-y-4">
+        <Reveal delay={0.08} className="space-y-4">
             <Card className="border-border/60">
                 <CardHeader className="space-y-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -311,11 +312,11 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                             <h3 className="text-lg font-semibold">没有匹配的规则</h3>
                         </div>
                     ) : (
-                        <div className="divide-y">
+                        <Stagger className="divide-y">
                             {filtered.map((item) => (
-                                <div key={item.id ?? item.name}>{renderRow(item)}</div>
+                                <StaggerItem key={item.id ?? item.name}>{renderRow(item)}</StaggerItem>
                             ))}
-                        </div>
+                        </Stagger>
                     )}
                 </CardContent>
             </Card>
@@ -373,7 +374,7 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </Reveal>
     );
 });
 

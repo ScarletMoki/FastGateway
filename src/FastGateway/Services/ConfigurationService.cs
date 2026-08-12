@@ -1,11 +1,14 @@
 using System.Text.Json;
 using Core.Entities;
 using FastGateway.Infrastructure;
+using MessagePack;
 
 namespace FastGateway.Services;
 
 /// <summary>
-///     配置文件管理服务，替代EntityFrameworkCore
+///     配置文件管理服务，替代EntityFrameworkCore。
+///     所有读写均在锁内完成（读返回副本），避免 API 修改配置时并发读到
+///     正在变更的 List 导致枚举异常；配置操作频率极低，锁开销可忽略。
 /// </summary>
 public class ConfigurationService
 {
@@ -18,6 +21,11 @@ public class ConfigurationService
     ///     配置版本号，任意变更后递增；供缓存派生数据的调用方做失效判断
     /// </summary>
     public long Version => Volatile.Read(ref _version);
+
+    /// <summary>
+    ///     配置持久化完成后触发（静态：网关子应用各自持有独立实例，集群推送只关心"有变更"这一事实）
+    /// </summary>
+    public static event Action? ConfigurationChanged;
 
     public ConfigurationService()
     {
@@ -78,262 +86,395 @@ public class ConfigurationService
                 Console.WriteLine($"配置保存失败：{ex}");
             }
         }
+
+        // 锁外触发，避免订阅方回调 ExportSnapshot 等带锁方法时死锁
+        ConfigurationChanged?.Invoke();
+    }
+
+    /// <summary>
+    ///     导出配置深拷贝（序列化往返），供集群推送/差异比对使用，不会泄漏内部可变引用
+    /// </summary>
+    public GatewayConfig ExportSnapshot()
+    {
+        lock (_lockObject)
+        {
+            var json = JsonSerializer.Serialize(_config, ConfigJsonContext.Default.GatewayConfig);
+            return JsonSerializer.Deserialize(json, ConfigJsonContext.Default.GatewayConfig) ?? new GatewayConfig();
+        }
+    }
+
+    /// <summary>
+    ///     整体替换配置（集群从节点应用主网关快照时使用）
+    /// </summary>
+    public void ReplaceConfig(GatewayConfig newConfig)
+    {
+        lock (_lockObject)
+        {
+            _config = newConfig;
+        }
+
+        SaveConfig();
     }
 
     // Server operations
     public List<Server> GetServers()
     {
-        return _config.Servers.ToList();
+        lock (_lockObject)
+        {
+            return _config.Servers.ToList();
+        }
     }
 
     public Server? GetServer(string id)
     {
-        return _config.Servers.FirstOrDefault(s => s.Id == id);
+        lock (_lockObject)
+        {
+            return _config.Servers.FirstOrDefault(s => s.Id == id);
+        }
     }
 
     public void AddServer(Server server)
     {
-        if (string.IsNullOrEmpty(server.Id))
-            server.Id = Guid.NewGuid().ToString();
+        lock (_lockObject)
+        {
+            if (string.IsNullOrEmpty(server.Id))
+                server.Id = Guid.NewGuid().ToString();
 
-        _config.Servers.Add(server);
-        SaveConfig();
+            _config.Servers.Add(server);
+            SaveConfig();
+        }
     }
 
     public void UpdateServer(Server server)
     {
-        var index = _config.Servers.FindIndex(s => s.Id == server.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.Servers[index] = server;
-            SaveConfig();
+            var index = _config.Servers.FindIndex(s => s.Id == server.Id);
+            if (index >= 0)
+            {
+                _config.Servers[index] = server;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteServer(string id)
     {
-        _config.Servers.RemoveAll(s => s.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.Servers.RemoveAll(s => s.Id == id);
+            SaveConfig();
+        }
     }
 
     // DomainName operations
     public List<DomainName> GetDomainNames()
     {
-        return _config.DomainNames.ToList();
+        lock (_lockObject)
+        {
+            return _config.DomainNames.ToList();
+        }
     }
 
     public DomainName[] GetDomainNamesByServerId(string serverId)
     {
-        return _config.DomainNames.Where(d => d.ServerId == serverId).ToArray();
+        lock (_lockObject)
+        {
+            return _config.DomainNames.Where(d => d.ServerId == serverId).ToArray();
+        }
     }
 
     public void AddDomainName(DomainName domainName)
     {
-        if (string.IsNullOrEmpty(domainName.Id))
-            domainName.Id = Guid.NewGuid().ToString();
+        lock (_lockObject)
+        {
+            if (string.IsNullOrEmpty(domainName.Id))
+                domainName.Id = Guid.NewGuid().ToString();
 
-        _config.DomainNames.Add(domainName);
-        SaveConfig();
+            _config.DomainNames.Add(domainName);
+            SaveConfig();
+        }
     }
 
     public void UpdateDomainName(DomainName domainName)
     {
-        var index = _config.DomainNames.FindIndex(d => d.Id == domainName.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.DomainNames[index] = domainName;
-            SaveConfig();
+            var index = _config.DomainNames.FindIndex(d => d.Id == domainName.Id);
+            if (index >= 0)
+            {
+                _config.DomainNames[index] = domainName;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteDomainName(string id)
     {
-        _config.DomainNames.RemoveAll(d => d.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.DomainNames.RemoveAll(d => d.Id == id);
+            SaveConfig();
+        }
     }
 
     // Cert operations
     public List<Cert> GetCerts()
     {
-        return _config.Certs.ToList();
+        lock (_lockObject)
+        {
+            return _config.Certs.ToList();
+        }
     }
 
     public Cert[] GetActiveCerts()
     {
-        return _config.Certs.Where(c => !c.Expired).ToArray();
+        lock (_lockObject)
+        {
+            return _config.Certs.Where(c => !c.Expired).ToArray();
+        }
     }
 
     public void AddCert(Cert cert)
     {
-        if (string.IsNullOrEmpty(cert.Id))
-            cert.Id = Guid.NewGuid().ToString();
+        lock (_lockObject)
+        {
+            if (string.IsNullOrEmpty(cert.Id))
+                cert.Id = Guid.NewGuid().ToString();
 
-        _config.Certs.Add(cert);
-        SaveConfig();
+            _config.Certs.Add(cert);
+            SaveConfig();
+        }
     }
 
     public void UpdateCert(Cert cert)
     {
-        var index = _config.Certs.FindIndex(c => c.Id == cert.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.Certs[index] = cert;
-            SaveConfig();
+            var index = _config.Certs.FindIndex(c => c.Id == cert.Id);
+            if (index >= 0)
+            {
+                _config.Certs[index] = cert;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteCert(string id)
     {
-        _config.Certs.RemoveAll(c => c.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.Certs.RemoveAll(c => c.Id == id);
+            SaveConfig();
+        }
     }
 
     // BlacklistAndWhitelist operations
     public List<BlacklistAndWhitelist> GetBlacklistAndWhitelists()
     {
-        return _config.BlacklistAndWhitelists.ToList();
+        lock (_lockObject)
+        {
+            return _config.BlacklistAndWhitelists.ToList();
+        }
     }
 
     public void AddBlacklistAndWhitelist(BlacklistAndWhitelist item)
     {
-        if (item.Id == 0)
-            item.Id = _config.BlacklistAndWhitelists.Count > 0 ? _config.BlacklistAndWhitelists.Max(b => b.Id) + 1 : 1;
+        lock (_lockObject)
+        {
+            if (item.Id == 0)
+                item.Id = _config.BlacklistAndWhitelists.Count > 0
+                    ? _config.BlacklistAndWhitelists.Max(b => b.Id) + 1
+                    : 1;
 
-        _config.BlacklistAndWhitelists.Add(item);
-        SaveConfig();
+            _config.BlacklistAndWhitelists.Add(item);
+            SaveConfig();
+        }
     }
 
     public void UpdateBlacklistAndWhitelist(BlacklistAndWhitelist item)
     {
-        var index = _config.BlacklistAndWhitelists.FindIndex(b => b.Id == item.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.BlacklistAndWhitelists[index] = item;
-            SaveConfig();
+            var index = _config.BlacklistAndWhitelists.FindIndex(b => b.Id == item.Id);
+            if (index >= 0)
+            {
+                _config.BlacklistAndWhitelists[index] = item;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteBlacklistAndWhitelist(long id)
     {
-        _config.BlacklistAndWhitelists.RemoveAll(b => b.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.BlacklistAndWhitelists.RemoveAll(b => b.Id == id);
+            SaveConfig();
+        }
     }
 
     // RateLimit operations
     public List<RateLimit> GetRateLimits()
     {
-        return _config.RateLimits.ToList();
+        lock (_lockObject)
+        {
+            return _config.RateLimits.ToList();
+        }
     }
 
     public void AddRateLimit(RateLimit rateLimit)
     {
-        if (string.IsNullOrEmpty(rateLimit.Id))
-            rateLimit.Id = Guid.NewGuid().ToString();
+        lock (_lockObject)
+        {
+            if (string.IsNullOrEmpty(rateLimit.Id))
+                rateLimit.Id = Guid.NewGuid().ToString();
 
-        _config.RateLimits.Add(rateLimit);
-        SaveConfig();
+            _config.RateLimits.Add(rateLimit);
+            SaveConfig();
+        }
     }
 
     public void UpdateRateLimit(RateLimit rateLimit)
     {
-        var index = _config.RateLimits.FindIndex(r => r.Id == rateLimit.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.RateLimits[index] = rateLimit;
-            SaveConfig();
+            var index = _config.RateLimits.FindIndex(r => r.Id == rateLimit.Id);
+            if (index >= 0)
+            {
+                _config.RateLimits[index] = rateLimit;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteRateLimit(string id)
     {
-        _config.RateLimits.RemoveAll(r => r.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.RateLimits.RemoveAll(r => r.Id == id);
+            SaveConfig();
+        }
     }
 
     // StreamForward operations (L4 端口转发)
     public List<StreamForward> GetStreamForwards()
     {
-        return _config.StreamForwards.ToList();
+        lock (_lockObject)
+        {
+            return _config.StreamForwards.ToList();
+        }
     }
 
     public StreamForward? GetStreamForward(string id)
     {
-        return _config.StreamForwards.FirstOrDefault(s => s.Id == id);
+        lock (_lockObject)
+        {
+            return _config.StreamForwards.FirstOrDefault(s => s.Id == id);
+        }
     }
 
     public void AddStreamForward(StreamForward streamForward)
     {
-        if (string.IsNullOrEmpty(streamForward.Id))
-            streamForward.Id = Guid.NewGuid().ToString();
+        lock (_lockObject)
+        {
+            if (string.IsNullOrEmpty(streamForward.Id))
+                streamForward.Id = Guid.NewGuid().ToString();
 
-        _config.StreamForwards.Add(streamForward);
-        SaveConfig();
+            _config.StreamForwards.Add(streamForward);
+            SaveConfig();
+        }
     }
 
     public void UpdateStreamForward(StreamForward streamForward)
     {
-        var index = _config.StreamForwards.FindIndex(s => s.Id == streamForward.Id);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.StreamForwards[index] = streamForward;
-            SaveConfig();
+            var index = _config.StreamForwards.FindIndex(s => s.Id == streamForward.Id);
+            if (index >= 0)
+            {
+                _config.StreamForwards[index] = streamForward;
+                SaveConfig();
+            }
         }
     }
 
     public void DeleteStreamForward(string id)
     {
-        _config.StreamForwards.RemoveAll(s => s.Id == id);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.StreamForwards.RemoveAll(s => s.Id == id);
+            SaveConfig();
+        }
     }
 
     // Setting operations
     public List<Setting> GetSettings()
     {
-        return _config.Settings.ToList();
+        lock (_lockObject)
+        {
+            return _config.Settings.ToList();
+        }
     }
 
     public Setting? GetSetting(string key)
     {
-        return _config.Settings.FirstOrDefault(s => s.Key == key);
+        lock (_lockObject)
+        {
+            return _config.Settings.FirstOrDefault(s => s.Key == key);
+        }
     }
 
     public void AddSetting(Setting setting)
     {
-        _config.Settings.Add(setting);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.Settings.Add(setting);
+            SaveConfig();
+        }
     }
 
     public void UpdateSetting(Setting setting)
     {
-        var index = _config.Settings.FindIndex(s => s.Key == setting.Key);
-        if (index >= 0)
+        lock (_lockObject)
         {
-            _config.Settings[index] = setting;
-            SaveConfig();
+            var index = _config.Settings.FindIndex(s => s.Key == setting.Key);
+            if (index >= 0)
+            {
+                _config.Settings[index] = setting;
+                SaveConfig();
+            }
         }
     }
 
     public void AddOrUpdateSetting(Setting setting)
     {
-        var index = _config.Settings.FindIndex(s => s.Key == setting.Key);
-        if (index >= 0)
-            _config.Settings[index] = setting;
-        else
-            _config.Settings.Add(setting);
+        lock (_lockObject)
+        {
+            var index = _config.Settings.FindIndex(s => s.Key == setting.Key);
+            if (index >= 0)
+                _config.Settings[index] = setting;
+            else
+                _config.Settings.Add(setting);
 
-        SaveConfig();
+            SaveConfig();
+        }
     }
 
     public void DeleteSetting(string key)
     {
-        _config.Settings.RemoveAll(s => s.Key == key);
-        SaveConfig();
+        lock (_lockObject)
+        {
+            _config.Settings.RemoveAll(s => s.Key == key);
+            SaveConfig();
+        }
     }
 }
 
 /// <summary>
 ///     网关配置数据结构
 /// </summary>
+[MessagePackObject(true)]
 public class GatewayConfig
 {
     public List<Server> Servers { get; set; } = new();
