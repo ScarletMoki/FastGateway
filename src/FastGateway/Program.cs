@@ -22,7 +22,7 @@ public static class Program
         // 发 prior-knowledge 前言，否则会静默降到 HTTP/1.1，每个并发请求占一条 TCP。
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
-        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions)
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
             ContentRootPath = AppContext.BaseDirectory,
             Args = args
