@@ -402,8 +402,6 @@ public sealed class ClusterRequestFailoverMiddleware
                 Entries = entries.ToArray(),
                 RequestConfig = new ForwarderRequestConfig
                 {
-                    Version = HttpVersion.Version20,
-                    VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
                     ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
                 },
                 ConnectTimeoutMs = connectTimeoutMs,
