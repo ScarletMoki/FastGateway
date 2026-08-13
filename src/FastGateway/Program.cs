@@ -22,11 +22,7 @@ public static class Program
         // 发 prior-knowledge 前言，否则会静默降到 HTTP/1.1，每个并发请求占一条 TCP。
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
-        // Native AOT 会裁掉 SQLitePCLRaw 的模块初始化器；必须在任何 SQLite 操作之前
-        // 显式加载 e_sqlite3，否则 stats.db 打不开，仪表盘会静默变成「暂无数据」。
-        SQLitePCL.Batteries_V2.Init();
-
-        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions)
         {
             ContentRootPath = AppContext.BaseDirectory,
             Args = args

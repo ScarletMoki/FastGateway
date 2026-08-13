@@ -48,6 +48,12 @@ RUN curl -sSL -O https://packages.microsoft.com/config/ubuntu/24.04/packages-mic
     # 动态解析 libmsquic 的实际 .so 路径（amd64/arm64 目录名不同），复制其全部 so 文件
     && dpkg -L libmsquic | grep -E '\.so' | xargs -I{} cp -av {} /deps/lib/ \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Native AOT 把 libe_sqlite3.so 放在 publish 目录；chiseled 动态加载器默认不搜 /app，
+# 复制到 /usr/lib（与 libmsquic 一起 COPY）避免仪表盘统计因找不到原生库而降级。
+RUN SO=$(find /app/publish \( -name 'libe_sqlite3.so' -o -name 'e_sqlite3.so' \) | head -n 1) \
+    && test -n "$SO" \
+    && cp -a "$SO" /deps/lib/libe_sqlite3.so \
+    && cp -a "$SO" /deps/lib/e_sqlite3.so
 # ip2region 离线IP归属地库（仓库不入库，构建时下载；失败不阻断构建，运行时统计归属地降级为“其他”）
 # 兜底 touch：即便下载失败也保证文件存在，否则最终阶段的 COPY 会让构建失败。
 RUN (curl -sSL --retry 3 -o /deps/ip2region.xdb https://tokenfile.oss-cn-beijing.aliyuncs.com/ip2region.xdb || true) \
@@ -57,6 +63,8 @@ RUN (curl -sSL --retry 3 -o /deps/ip2region.xdb https://tokenfile.oss-cn-beijing
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled-extra AS final
 # chiseled 无法执行 ln/apt，改用 TZ 环境变量设置时区（镜像已内置 tzdata）
 ENV TZ=Asia/Shanghai
+# 兜底：若 libe_sqlite3.so 仍留在 /app，让动态加载器能找到
+ENV LD_LIBRARY_PATH=/app
 WORKDIR /app
 EXPOSE 8080
 # HTTP/3 所需 libmsquic 原生库（构建阶段已按目标架构解析并归拢）

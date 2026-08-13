@@ -6,9 +6,6 @@ public static class StatisticsService
 {
     public static IEndpointRouteBuilder MapStatistics(this IEndpointRouteBuilder app)
     {
-        // 查询侧懒初始化（后台服务未跑起来之前也能安全响应）
-        StatisticsDb.Initialize();
-
         var statistics = app.MapGroup("/api/v1/statistics")
             .WithTags("统计分析")
             .WithDescription("流量统计分析")

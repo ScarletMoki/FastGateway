@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.Data.Sqlite;
 using static FastGateway.Services.Statistics.SqlRunner;
 
@@ -10,6 +11,7 @@ namespace FastGateway.Services.Statistics;
 public static class StatisticsDb
 {
     private const int SchemaVersion = 1;
+    private const int RetryIntervalMs = 5_000;
 
     private static readonly string DbPath = Path.Combine(AppContext.BaseDirectory, "data", "stats.db");
 
@@ -21,22 +23,28 @@ public static class StatisticsDb
             { DataSource = DbPath, Mode = SqliteOpenMode.ReadOnly, Cache = SqliteCacheMode.Private }.ToString();
 
     private static readonly Lock InitLock = new();
-    private static volatile bool _initialized;
+    private static long _nextRetryMs;
 
     public static bool IsAvailable { get; private set; }
 
+    /// <summary>最近一次初始化失败的可读原因，供仪表盘展示。成功时为 null。</summary>
+    public static string? UnavailableReason { get; private set; }
+
     public static void Initialize(ILogger? logger = null)
     {
-        if (_initialized) return;
+        if (IsAvailable) return;
+        if (Volatile.Read(ref _nextRetryMs) > Environment.TickCount64) return;
 
         lock (InitLock)
         {
-            if (_initialized) return;
+            if (IsAvailable) return;
+            if (_nextRetryMs > Environment.TickCount64) return;
 
             try
             {
-                var directory = Path.GetDirectoryName(DbPath);
-                if (directory != null && !Directory.Exists(directory)) Directory.CreateDirectory(directory);
+                // Native AOT 会裁掉 SQLitePCLRaw 的模块初始化器；必须在 Open 之前显式加载。
+                SQLitePCL.Batteries_V2.Init();
+                EnsureDataDirectoryWritable();
 
                 using var connection = new SqliteConnection(WriteConnectionString);
                 connection.Open();
@@ -45,20 +53,98 @@ public static class StatisticsDb
                 Execute(connection, "PRAGMA auto_vacuum=INCREMENTAL;");
                 CreateSchema(connection);
                 IsAvailable = true;
+                UnavailableReason = null;
             }
             catch (Exception ex)
             {
-                // 统计库不可用只降级统计功能，绝不影响代理转发
+                // 统计库不可用只降级统计功能，绝不影响代理转发；稍后由后台服务/查询侧重试
                 IsAvailable = false;
-                logger?.LogError(ex, "统计数据库初始化失败（{DbPath}），统计功能已降级", DbPath);
+                UnavailableReason = FormatFailure(ex);
+                _nextRetryMs = Environment.TickCount64 + RetryIntervalMs;
+                logger?.LogError(ex, "统计数据库初始化失败（{DbPath}），统计功能已降级：{Reason}",
+                    DbPath, UnavailableReason);
                 if (logger == null)
-                    Console.Error.WriteLine($"统计数据库初始化失败（{DbPath}）：{ex}");
-            }
-            finally
-            {
-                _initialized = true;
+                    Console.Error.WriteLine($"统计数据库初始化失败（{DbPath}）：{UnavailableReason}");
             }
         }
+    }
+
+    private static void EnsureDataDirectoryWritable()
+    {
+        var directory = Path.GetDirectoryName(DbPath);
+        if (string.IsNullOrEmpty(directory))
+            throw new InvalidOperationException($"无法解析统计库目录：{DbPath}");
+
+        Directory.CreateDirectory(directory);
+
+        var uid = CurrentUid();
+        var probe = Path.Combine(directory, $".stats-write-probe-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllText(probe, "ok");
+        }
+        catch (Exception ex)
+        {
+            throw new IOException(
+                $"目录不可写：{directory}（进程 UID={uid}）。Docker 镜像以非 root 运行，chmod 给宿主机登录用户不够，请执行：chown -R {uid}:{uid} data",
+                ex);
+        }
+        finally
+        {
+            try { File.Delete(probe); }
+            catch { /* ignore */ }
+        }
+
+        if (!File.Exists(DbPath)) return;
+
+        try
+        {
+            using var fs = new FileStream(DbPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        }
+        catch (Exception ex)
+        {
+            throw new IOException(
+                $"stats.db 已存在但无法写入（进程 UID={uid}）。请在宿主机执行：chown -R {uid}:{uid} data",
+                ex);
+        }
+    }
+
+    private static string FormatFailure(Exception ex)
+    {
+        var uid = CurrentUid();
+        for (var inner = ex; inner != null; inner = inner.InnerException)
+        {
+            if (inner is DllNotFoundException ||
+                inner.Message.Contains("e_sqlite3", StringComparison.OrdinalIgnoreCase) ||
+                inner.Message.Contains("libe_sqlite3", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"无法加载 SQLite 原生库 e_sqlite3（与 data 目录权限无关）。{inner.Message}";
+            }
+        }
+
+        if (ex is IOException)
+            return ex.Message;
+
+        if (ex is SqliteException sqlite && sqlite.SqliteErrorCode is 14 or 8)
+        {
+            return
+                $"无法打开 {DbPath}（进程 UID={uid}，SQLite {sqlite.SqliteErrorCode}: {sqlite.Message}）。请在宿主机执行：chown -R {uid}:{uid} data";
+        }
+
+        return $"无法打开 {DbPath}（进程 UID={uid}）：{ex.GetType().Name}: {ex.Message}";
+    }
+
+    private static string CurrentUid()
+    {
+        if (OperatingSystem.IsWindows()) return Environment.UserName;
+        try { return Libc.getuid().ToString(); }
+        catch { return Environment.UserName; }
+    }
+
+    private static class Libc
+    {
+        [DllImport("libc", ExactSpelling = true)]
+        internal static extern uint getuid();
     }
 
     public static SqliteConnection OpenWriteConnection()

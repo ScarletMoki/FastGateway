@@ -50,9 +50,11 @@ public static class StatisticsQueryService
     {
         var info = ResolveRange(range);
         var hostFilter = host ?? string.Empty;
+        StatisticsDb.Initialize();
         var result = new StatisticsOverviewDto
         {
             Available = StatisticsDb.IsAvailable,
+            UnavailableReason = StatisticsDb.UnavailableReason,
             DroppedEntries = StatisticsCollector.DroppedCount
         };
 

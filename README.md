@@ -173,6 +173,8 @@ The container uses port `8080` for the management UI/API. HTTP/HTTPS listener po
 
 ```bash
 mkdir -p data certs
+# The image runs as UID 1654; chowning to your login user is not enough
+sudo chown -R 1654:1654 data certs
 
 docker run -d --restart=always --name=fast-gateway \
   -e PASSWORD='change-this-password' \
@@ -188,7 +190,7 @@ docker run -d --restart=always --name=fast-gateway \
 
 Open `http://localhost:8080` after the container starts. If no password is supplied, the current fallback is `Aa123456`; replace it before exposing the management endpoint. `443/udp` is required for HTTP/3.
 
-The published image is a Native AOT build on a chiseled base (no shell, non-root). `aidotnet/fast-gateway` is a multi-arch image for `linux/amd64` and `linux/arm64`.
+The published image is a Native AOT build on a chiseled base (no shell, non-root, UID 1654). `aidotnet/fast-gateway` is a multi-arch image for `linux/amd64` and `linux/arm64`. Run `chown -R 1654:1654` on `data`/`certs` before mounting them, or the statistics database and certificates may be unwritable.
 
 ## Docker Compose
 

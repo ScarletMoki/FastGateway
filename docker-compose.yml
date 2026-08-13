@@ -1,8 +1,22 @@
 ﻿services:
+  # chiseled 镜像以 UID 1654 运行且无 shell，无法在容器内 chown。
+  # 宿主机 bind mount 默认属主是创建目录的登录用户，统计库 / 证书会因此打不开。
+  fast-gateway-init-perms:
+    image: busybox:1.37
+    container_name: fast-gateway-init-perms
+    command: ["sh", "-c", "mkdir -p /data /certs && chown -R 1654:1654 /data /certs"]
+    volumes:
+      - ./data:/data
+      - ./certs:/certs
+
   fast-gateway.service:
     image: registry.cn-shenzhen.aliyuncs.com/token-ai/fast-gateway
     container_name: fast-gateway
     restart: always
+    user: "1654:1654"
+    depends_on:
+      fast-gateway-init-perms:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: src/FastGateway/Dockerfile

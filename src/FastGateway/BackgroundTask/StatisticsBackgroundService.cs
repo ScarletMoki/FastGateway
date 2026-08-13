@@ -39,15 +39,26 @@ public sealed class StatisticsBackgroundService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        StatisticsDb.Initialize(logger);
         GeoIpService.Initialize(logger);
         LogRetention.Refresh(configurationService);
 
-        if (!StatisticsDb.IsAvailable)
+        while (!stoppingToken.IsCancellationRequested && !StatisticsDb.IsAvailable)
         {
-            logger.LogWarning("统计数据库不可用，统计后台服务未启动");
-            return;
+            StatisticsDb.Initialize(logger);
+            if (StatisticsDb.IsAvailable) break;
+
+            logger.LogWarning("统计数据库暂不可用，30 秒后重试。{Reason}", StatisticsDb.UnavailableReason);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
+
+        if (!StatisticsDb.IsAvailable) return;
 
         // 地理回填属非关键的一次性数据修复，任何异常都不得拖垮宿主
         // （BackgroundServiceExceptionBehavior 默认 StopHost 会连带停掉整个网关）

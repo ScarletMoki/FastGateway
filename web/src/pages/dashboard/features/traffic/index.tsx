@@ -103,7 +103,9 @@ export default function TrafficTab() {
         <Alert variant="destructive">
           <AlertTitle>统计服务不可用</AlertTitle>
           <AlertDescription>
-            统计数据库未能启动，仪表盘无法记录流量（网关转发不受影响）。请查看运行日志里的「统计数据库初始化失败」，并确认 data 目录可写。
+            {overview.unavailableReason?.trim()
+              ? overview.unavailableReason
+              : "统计数据库未能启动，仪表盘无法记录流量（网关转发不受影响）。请查看运行日志里的「统计数据库初始化失败」。"}
           </AlertDescription>
         </Alert>
       )}
