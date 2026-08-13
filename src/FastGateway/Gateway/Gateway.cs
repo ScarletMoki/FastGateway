@@ -822,6 +822,9 @@ public static class Gateway
 
         return new ForwarderRequestConfig
         {
+            Version = HttpVersion.Version20,
+            // OrLower：h2c 上游复用 HTTP/2；仍是 HTTP/1.1 的上游会降级，避免一刀切断掉。
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
             ActivityTimeout = TimeSpan.FromSeconds(timeoutSeconds),
             AllowResponseBuffering = false
         };

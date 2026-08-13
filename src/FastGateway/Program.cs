@@ -18,6 +18,10 @@ public static class Program
     {
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
+        // 明文上游（http://meteor-api:8080）默认不能走 HTTP/2。打开后 YARP 才能对 h2c 服务
+        // 发 prior-knowledge 前言，否则会静默降到 HTTP/1.1，每个并发请求占一条 TCP。
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
         // Native AOT 会裁掉 SQLitePCLRaw 的模块初始化器；必须在任何 SQLite 操作之前
         // 显式加载 e_sqlite3，否则 stats.db 打不开，仪表盘会静默变成「暂无数据」。
         SQLitePCL.Batteries_V2.Init();
