@@ -309,12 +309,14 @@ public sealed class ClusterRequestFailoverMiddleware
                 AllowAutoRedirect = false,
                 AutomaticDecompression = DecompressionMethods.None,
                 UseCookies = false,
-                EnableMultipleHttp2Connections = true,
+                EnableMultipleHttp2Connections = false,
                 ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
                 RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8,
                 ConnectTimeout = TimeSpan.FromMilliseconds(timeout),
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-                ResponseDrainTimeout = TimeSpan.FromSeconds(30)
+                ResponseDrainTimeout = TimeSpan.FromSeconds(5),
+                MaxConnectionsPerServer = int.MaxValue
             };
 
             return new HttpMessageInvoker(handler, disposeHandler: true);
@@ -402,7 +404,9 @@ public sealed class ClusterRequestFailoverMiddleware
                 Entries = entries.ToArray(),
                 RequestConfig = new ForwarderRequestConfig
                 {
-                    ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds)
+                    ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds),
+                    Version = HttpVersion.Version11,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionExact
                 },
                 ConnectTimeoutMs = connectTimeoutMs,
                 BudgetMs = budgetMs

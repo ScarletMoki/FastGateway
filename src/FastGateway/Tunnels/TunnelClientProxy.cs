@@ -13,7 +13,11 @@ public class TunnelClientProxy
 
     public void CreateClient(Tunnel tunnel, Server server, DomainName[] domainNames)
     {
-        foreach (var tunnelProxy in tunnel.Proxy) tunnelProxy.Id = Guid.NewGuid().ToString("N");
+        foreach (var tunnelProxy in tunnel.Proxy)
+        {
+            if (string.IsNullOrEmpty(tunnelProxy.Id))
+                tunnelProxy.Id = Guid.NewGuid().ToString("N");
+        }
         TunnelClients[tunnel.Name] = tunnel;
 
         // 更新配置

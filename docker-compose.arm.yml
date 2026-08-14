@@ -1,20 +1,9 @@
 services:
-  fast-gateway-init-perms:
-    image: busybox:1.37
-    container_name: fast-gateway-init-perms
-    command: ["sh", "-c", "mkdir -p /data /certs && chown -R 1654:1654 /data /certs"]
-    volumes:
-      - ./data:/data
-      - ./certs:/certs
-
   fast-gateway.service:
     image: aidotnet/fast-gateway:arm64
     container_name: fast-gateway.service
     restart: always
-    user: "1654:1654"
-    depends_on:
-      fast-gateway-init-perms:
-        condition: service_completed_successfully
+    user: "0:0"
     build:
       context: .
       dockerfile: src/FastGateway.Service/Dockerfile.arm
@@ -28,5 +17,8 @@ services:
         - "80:80"
         - "443:443/udp"
         - "443:443/tcp"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     platform: linux/arm64
-

@@ -59,13 +59,15 @@ RUN SO=$(find /app/publish \( -name 'libe_sqlite3.so' -o -name 'e_sqlite3.so' \)
 RUN (curl -sSL --retry 3 -o /deps/ip2region.xdb https://tokenfile.oss-cn-beijing.aliyuncs.com/ip2region.xdb || true) \
     && [ -f /deps/ip2region.xdb ] || touch /deps/ip2region.xdb
 
-# 最终阶段：chiseled-extra 含 Native AOT 运行所需原生依赖与 tzdata/ICU 等，且不含 shell、以非 root 运行。
+# 最终阶段：chiseled-extra 含 Native AOT 运行所需原生依赖与 tzdata/ICU 等，且不含 shell。
+# 基础镜像默认 USER app（UID 1654）；改为 root，避免 bind mount 的 data/certs 无法写入。
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled-extra AS final
 # chiseled 无法执行 ln/apt，改用 TZ 环境变量设置时区（镜像已内置 tzdata）
 ENV TZ=Asia/Shanghai
 # 兜底：若 libe_sqlite3.so 仍留在 /app，让动态加载器能找到
 ENV LD_LIBRARY_PATH=/app
 WORKDIR /app
+USER root
 EXPOSE 8080
 # HTTP/3 所需 libmsquic 原生库（构建阶段已按目标架构解析并归拢）
 COPY --from=build /deps/lib/ /usr/lib/

@@ -173,10 +173,9 @@ FastGateway 在「证书管理」页面提供三种方式为域名配置 HTTPS �
 
 ```bash
 mkdir -p data certs
-# 镜像以 UID 1654 运行；chmod 给当前登录用户不够，必须把目录属主改成 1654
-sudo chown -R 1654:1654 data certs
 
 docker run -d --restart=always --name=fast-gateway \
+  --user 0:0 \
   -e PASSWORD='change-this-password' \
   -e TunnelToken='change-this-tunnel-token' \
   -p 8080:8080 \
@@ -190,7 +189,7 @@ docker run -d --restart=always --name=fast-gateway \
 
 容器启动后访问 `http://localhost:8080`。如果没有提供密码，当前源码回退到 `Aa123456`；将管理端口暴露到公网前请务必修改密码。HTTP/3 需要映射 `443/udp`。
 
-发布镜像为 Native AOT，基于 chiseled 精简根文件系统（无 shell、非 root，UID 1654）。`aidotnet/fast-gateway` 为多架构镜像，同时支持 `linux/amd64` 与 `linux/arm64`。把 `data`/`certs` 挂进去之前请 `chown -R 1654:1654`，否则统计库和证书可能无法写入。
+发布镜像为 Native AOT，基于 chiseled 精简根文件系统（无 shell）。基础镜像默认非 root（UID 1654），本仓库镜像与 Compose 以 `user: "0:0"` 运行，这样挂载 `data`/`certs` 才能写入统计库和证书。`aidotnet/fast-gateway` 为多架构镜像，同时支持 `linux/amd64` 与 `linux/arm64`。
 
 ## Docker Compose
 

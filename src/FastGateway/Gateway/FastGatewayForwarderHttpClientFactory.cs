@@ -27,26 +27,41 @@ internal sealed class FastGatewayForwarderHttpClientFactory(
     }
 }
 
-public sealed class StandardForwarderHttpClientFactory : ForwarderHttpClientFactory
+/// <summary>
+///     普通上游共用一份进程级 <see cref="SocketsHttpHandler"/>。
+///     YARP 默认每个 cluster 各建一个 handler；多条路由指向同一主机时，
+///     <c>MaxConnectionsPerServer</c> 会按 cluster 相乘。共享后上限才是「每上游」。
+///     并发上限交给系统 nofile；handler 默认即 <see cref="int.MaxValue"/>。
+/// </summary>
+public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFactory
 {
-    protected override void ConfigureHandler(ForwarderHttpClientContext context, SocketsHttpHandler handler)
-    {
-        handler.UseProxy = false;
-        handler.AllowAutoRedirect = false;
-        handler.AutomaticDecompression = DecompressionMethods.None;
-        handler.UseCookies = false;
-        handler.ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current);
-        handler.RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8;
-        // 建连（TCP + TLS 握手）超时。1s 对跨境/高延迟/冷启动上游过短，会间歇性握手失败；
-        // 取 10s，落在 YARP 常见区间，避免误杀慢上游。
-        handler.ConnectTimeout = TimeSpan.FromSeconds(10);
-        handler.PooledConnectionLifetime = TimeSpan.FromMinutes(10);
-        handler.PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2);
-        handler.ResponseDrainTimeout = TimeSpan.FromSeconds(10);
-        handler.EnableMultipleHttp2Connections = true;
-        handler.EnableMultipleHttp3Connections = false;
-        handler.MaxConnectionsPerServer = context.NewConfig?.MaxConnectionsPerServer ?? 1024;
+    internal const int MaxConnectionsPerServer = int.MaxValue;
 
-        base.ConfigureHandler(context, handler);
+    private static readonly SocketsHttpHandler SharedHandler = CreateSharedHandler();
+
+    public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context)
+    {
+        // disposeHandler: false —— 热重载时 YARP 会 Dispose 旧 invoker，不能带走共享 handler
+        return new HttpMessageInvoker(SharedHandler, disposeHandler: false);
+    }
+
+    private static SocketsHttpHandler CreateSharedHandler()
+    {
+        return new SocketsHttpHandler
+        {
+            UseProxy = false,
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+            UseCookies = false,
+            ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
+            RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+            ResponseDrainTimeout = TimeSpan.FromSeconds(5),
+            EnableMultipleHttp2Connections = false,
+            EnableMultipleHttp3Connections = false,
+            MaxConnectionsPerServer = MaxConnectionsPerServer
+        };
     }
 }

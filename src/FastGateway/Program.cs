@@ -18,8 +18,8 @@ public static class Program
     {
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
-        // 明文上游（http://meteor-api:8080）默认不能走 HTTP/2。打开后 YARP 才能对 h2c 服务
-        // 发 prior-knowledge 前言，否则会静默降到 HTTP/1.1，每个并发请求占一条 TCP。
+        // 仅隧道 / 已知 h2c 对端需要明文 HTTP/2。普通 http:// 上游由 ForwarderRequestConfig
+        // 钉在 HTTP/1.1，避免对不支持 h2c 的服务做 prior-knowledge 探测、套接字翻倍。
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions

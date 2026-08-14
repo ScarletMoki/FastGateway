@@ -1,4 +1,6 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Yarp.ReverseProxy.Forwarder;
@@ -6,95 +8,66 @@ using Yarp.ReverseProxy.Forwarder;
 namespace FastGateway.Tunnels;
 
 /// <summary>
-///     The factory that YARP will use the create outbound connections by host name.
+///     隧道出站工厂：每个网关实例共用一份 handler（ConnectCallback 绑定本实例的 Agent）。
+///     避免每条隧道路由各建一个连接池。
 /// </summary>
 internal class TunnelClientFactory(
     AgentClientManager agentClientManager,
-    TunnelClientProxy tunnelClientProxy,
     AgentTunnelFactory agentTunnelFactory)
-    : ForwarderHttpClientFactory
+    : IForwarderHttpClientFactory
 {
     // TODO: These values should be populated by configuration so there's no need to remove
     // channels.
     private readonly ConcurrentDictionary<string, List<Stream>> _clusterConnections = new();
+    private readonly SocketsHttpHandler _handler = CreateHandler(agentClientManager, agentTunnelFactory);
 
     public List<Stream> GetConnectionChannel(string host)
     {
-        // 如果存在则更新
         return _clusterConnections.GetOrAdd(host.ToLowerInvariant(),
             _ => new List<Stream>());
     }
 
-    /// <summary>
-    ///     随机获取一个Stream
-    /// </summary>
-    /// <param name="streams"></param>
-    private Stream GetStream(List<Stream> streams)
+    public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context)
     {
-        var index = new Random().Next(0, streams.Count);
-
-        return streams[index];
+        return new HttpMessageInvoker(_handler, disposeHandler: false);
     }
 
-    /// <summary>
-    ///     yarp的网关客户端工厂，当yarp需要创建一个新的请求时，会调用此方法。
-    /// </summary>
-    /// <param name="httpClientContext"></param>
-    /// <param name="handler"></param>
-    protected override void ConfigureHandler(ForwarderHttpClientContext httpClientContext, SocketsHttpHandler handler)
+    private static SocketsHttpHandler CreateHandler(
+        AgentClientManager agentClientManager,
+        AgentTunnelFactory agentTunnelFactory)
     {
-        handler.SslOptions.RemoteCertificateValidationCallback =
-            (sender, certificate, chain, errors) => true;
-
-        handler.MaxConnectionsPerServer = 100;
-        handler.PooledConnectionLifetime = TimeSpan.FromMinutes(5);
-        handler.PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1);
-        handler.KeepAlivePingDelay = TimeSpan.FromMinutes(5);
-        handler.KeepAlivePingTimeout = TimeSpan.FromMinutes(5);
-        handler.KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always;
-        handler.RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8;
-        // 新增：从 Gateway.ConfigureHttpClient 移植的参数
-        handler.ConnectTimeout = TimeSpan.FromMinutes(5);
-        handler.ResponseDrainTimeout = TimeSpan.FromMinutes(5);
-        handler.EnableMultipleHttp2Connections = true;
-        handler.EnableMultipleHttp3Connections = true;
-
-
-        base.ConfigureHandler(httpClientContext, handler);
-
-        var previous = handler.ConnectCallback ?? DefaultConnectCallback;
-
-        static async ValueTask<Stream> DefaultConnectCallback(SocketsHttpConnectionContext context,
-            CancellationToken cancellationToken)
+        var handler = new SocketsHttpHandler
         {
-            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
+            UseProxy = false,
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+            UseCookies = false,
+            ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
+            SslOptions =
             {
-                NoDelay = true
-            };
-            try
-            {
-                await socket.ConnectAsync(context.DnsEndPoint, cancellationToken);
-                return new NetworkStream(socket, true);
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
-        }
-
+                RemoteCertificateValidationCallback = (_, _, _, _) => true
+            },
+            MaxConnectionsPerServer = 100,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+            KeepAlivePingDelay = TimeSpan.FromMinutes(5),
+            KeepAlivePingTimeout = TimeSpan.FromMinutes(5),
+            KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+            RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8,
+            ConnectTimeout = TimeSpan.FromMinutes(5),
+            ResponseDrainTimeout = TimeSpan.FromMinutes(5),
+            EnableMultipleHttp2Connections = true,
+            EnableMultipleHttp3Connections = false,
+            MaxAutomaticRedirections = 3
+        };
 
         handler.ConnectCallback = async (context, cancellationToken) =>
         {
-            var host = context.DnsEndPoint.Host.ToLower();
+            var host = context.DnsEndPoint.Host.ToLowerInvariant();
 
             if (agentClientManager.TryGetValue(host, out var agentClient))
             {
-                var agentTunnel =
-                    await agentTunnelFactory.CreateHttpTunnelAsync(agentClient.Connection, cancellationToken);
-
-
-                return agentTunnel;
+                return await agentTunnelFactory.CreateHttpTunnelAsync(agentClient.Connection, cancellationToken);
             }
 
             // 集群中继目的地（node_cluster-*）：主连接挂在管理应用的进程级枢纽，而非本子应用的管理器
@@ -102,10 +75,29 @@ internal class TunnelClientFactory(
                 return await Cluster.ClusterTunnelHub.Tunnels.CreateHttpTunnelAsync(clusterClient.Connection,
                     cancellationToken);
 
-            return await previous(context, cancellationToken);
+            return await DefaultConnectCallback(context, cancellationToken);
         };
 
-        handler.MaxAutomaticRedirections = 3;
-        handler.EnableMultipleHttp2Connections = true;
+        return handler;
+    }
+
+    private static async ValueTask<Stream> DefaultConnectCallback(
+        SocketsHttpConnectionContext context,
+        CancellationToken cancellationToken)
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
+        {
+            NoDelay = true
+        };
+        try
+        {
+            await socket.ConnectAsync(context.DnsEndPoint, cancellationToken);
+            return new NetworkStream(socket, true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 }
