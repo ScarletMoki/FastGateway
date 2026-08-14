@@ -59,7 +59,9 @@ public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFac
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
             ResponseDrainTimeout = TimeSpan.FromSeconds(5),
-            EnableMultipleHttp2Connections = false,
+            // 只对真正的 HTTP/2（HTTPS ALPN）生效：单连接默认约 100 路并发流，
+            // 打满后另开连接。明文 http:// 已钉 HTTP/1.1，不受此开关影响。
+            EnableMultipleHttp2Connections = true,
             EnableMultipleHttp3Connections = false,
             MaxConnectionsPerServer = MaxConnectionsPerServer
         };
