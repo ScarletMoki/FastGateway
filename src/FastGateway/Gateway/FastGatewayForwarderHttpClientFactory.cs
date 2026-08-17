@@ -1,3 +1,4 @@
+using FastGateway.Options;
 using FastGateway.Tunnels;
 using System.Diagnostics;
 using System.Net;
@@ -31,18 +32,21 @@ internal sealed class FastGatewayForwarderHttpClientFactory(
 ///     普通上游共用一份进程级 <see cref="SocketsHttpHandler"/>。
 ///     YARP 默认每个 cluster 各建一个 handler；多条路由指向同一主机时，
 ///     <c>MaxConnectionsPerServer</c> 会按 cluster 相乘。共享后上限才是「每上游」。
-///     并发上限交给系统 nofile；handler 默认即 <see cref="int.MaxValue"/>。
+///     上限必须有界：HTTP/1.1 上游一请求一连接，不设限时高并发会耗尽 fd（ENFILE），
+///     达到上限后请求在池内排队，优于把整机文件表打爆。
 /// </summary>
 public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFactory
 {
-    internal const int MaxConnectionsPerServer = int.MaxValue;
+    internal static int MaxConnectionsPerServer => FastGatewayOptions.MaxConnectionsPerUpstream;
 
-    private static readonly SocketsHttpHandler SharedHandler = CreateSharedHandler();
+    // Lazy：确保首个网关请求到来时 FastGatewayOptions.Initialize 已执行完毕
+    private static readonly Lazy<SocketsHttpHandler> SharedHandler =
+        new(CreateSharedHandler, LazyThreadSafetyMode.ExecutionAndPublication);
 
     public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context)
     {
         // disposeHandler: false —— 热重载时 YARP 会 Dispose 旧 invoker，不能带走共享 handler
-        return new HttpMessageInvoker(SharedHandler, disposeHandler: false);
+        return new HttpMessageInvoker(SharedHandler.Value, disposeHandler: false);
     }
 
     private static SocketsHttpHandler CreateSharedHandler()
@@ -63,7 +67,7 @@ public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFac
             // 打满后另开连接。明文 http:// 已钉 HTTP/1.1，不受此开关影响。
             EnableMultipleHttp2Connections = true,
             EnableMultipleHttp3Connections = false,
-            MaxConnectionsPerServer = MaxConnectionsPerServer
+            MaxConnectionsPerServer = FastGatewayOptions.MaxConnectionsPerUpstream
         };
     }
 }
