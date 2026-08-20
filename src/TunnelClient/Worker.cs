@@ -1,66 +1,83 @@
-using System.Diagnostics.CodeAnalysis;
 using TunnelClient.Model;
 using TunnelClient.Monitor;
 
 namespace TunnelClient;
 
-public class Worker : BackgroundService
+public partial class Worker : BackgroundService
 {
+    /// <summary>
+    ///     认证失败退避上限（秒）
+    /// </summary>
+    private const int MaxAuthBackoffSeconds = 300;
+
     private readonly ILogger<Worker> _logger;
     private readonly IServiceProvider _services;
+    private readonly Tunnel _tunnel;
 
-    public Worker(ILogger<Worker> logger, IServiceProvider services)
+    public Worker(ILogger<Worker> logger, IServiceProvider services, Tunnel tunnel)
     {
         _logger = logger;
         _services = services;
+        _tunnel = tunnel;
     }
 
-    [UnconditionalSuppressMessage("Trimming",
-        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
-        Justification = "<Pending>")]
-    [UnconditionalSuppressMessage("AOT",
-        "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.",
-        Justification = "<Pending>")]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var tunnel = Tunnel.GetTunnel();
-        tunnel.Validate();
+        var monitorServer = new MonitorServer(_services, _tunnel);
 
-        var monitorServer = new MonitorServer(_services);
-
-        var serverClient = new ServerClient(monitorServer, tunnel,
+        var serverClient = new ServerClient(monitorServer, _tunnel,
             _services.GetRequiredService<ILogger<ServerClient>>());
+
+        // 认证失败使用带上限的指数退避，其他异常按固定重连间隔
+        var authFailureCount = 0;
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await MonitorServerAsync(monitorServer, serverClient, tunnel, stoppingToken);
-            _logger.LogInformation("尝试重新连接到服务器...");
-            await Task.Delay(TimeSpan.FromSeconds(tunnel.ReconnectInterval), stoppingToken);
-            _logger.LogInformation("重新连接到服务器中...");
+            try
+            {
+                await monitorServer.RegisterNodeAsync(_tunnel, stoppingToken);
+                authFailureCount = 0;
+                Log.Connected(_logger, _tunnel.Name, _tunnel.ServerUrl);
+
+                await serverClient.TransportCoreAsync(_tunnel, stoppingToken);
+
+                Log.Disconnected(_logger, _tunnel.Name, _tunnel.ReconnectInterval);
+                await Task.Delay(TimeSpan.FromSeconds(_tunnel.ReconnectInterval), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                authFailureCount++;
+                var backoffSeconds = Math.Min(
+                    _tunnel.ReconnectInterval * (1 << Math.Min(authFailureCount - 1, 8)),
+                    MaxAuthBackoffSeconds);
+                Log.AuthFailed(_logger, authFailureCount, backoffSeconds);
+                await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), stoppingToken);
+            }
+            catch (Exception e)
+            {
+                Log.ConnectError(_logger, e.Message, _tunnel.ReconnectInterval);
+                await Task.Delay(TimeSpan.FromSeconds(_tunnel.ReconnectInterval), stoppingToken);
+            }
         }
     }
 
-    private async Task MonitorServerAsync(MonitorServer monitorServer, ServerClient serverClient,
-        Tunnel tunnel, CancellationToken stoppingToken)
+    private static partial class Log
     {
-        try
-        {
-            await monitorServer.RegisterNodeAsync(tunnel, stoppingToken);
-            await serverClient.TransportCoreAsync(tunnel, stoppingToken);
-        }
-        catch (UnauthorizedAccessException e)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine(e);
-            Console.ResetColor();
-            _logger.LogError(e, "连接被拒绝，请检查Token是否正确或是否过期！");
-            await Task.Delay(1000, stoppingToken);
-            Environment.Exit(0);
-        }
-        catch (Exception e)
-        {
-            _logger.LogError(e, "连接错误！");
-            await Task.Delay(1000, stoppingToken);
-        }
+        [LoggerMessage(LogLevel.Information, "节点 [{nodeName}] 已连接到服务器 {serverUrl}")]
+        public static partial void Connected(ILogger logger, string nodeName, string serverUrl);
+
+        [LoggerMessage(LogLevel.Warning, "节点 [{nodeName}] 与服务器断开，{reconnectInterval}s 后重连")]
+        public static partial void Disconnected(ILogger logger, string nodeName, int reconnectInterval);
+
+        [LoggerMessage(LogLevel.Error,
+            "认证失败（第 {failureCount} 次）：请检查节点名与密钥是否正确、节点是否被禁用；{backoffSeconds}s 后重试")]
+        public static partial void AuthFailed(ILogger logger, int failureCount, int backoffSeconds);
+
+        [LoggerMessage(LogLevel.Error, "连接错误：{message}，{reconnectInterval}s 后重连")]
+        public static partial void ConnectError(ILogger logger, string message, int reconnectInterval);
     }
 }

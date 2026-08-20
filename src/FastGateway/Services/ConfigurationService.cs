@@ -408,6 +408,57 @@ public class ConfigurationService
         }
     }
 
+    // TunnelNode operations（隧道节点）
+    public List<TunnelNode> GetTunnelNodes()
+    {
+        lock (_lockObject)
+        {
+            return _config.TunnelNodes.ToList();
+        }
+    }
+
+    public TunnelNode? GetTunnelNode(string name)
+    {
+        lock (_lockObject)
+        {
+            return _config.TunnelNodes.FirstOrDefault(n =>
+                string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    public void AddTunnelNode(TunnelNode node)
+    {
+        lock (_lockObject)
+        {
+            _config.TunnelNodes.Add(node);
+            SaveConfig();
+        }
+    }
+
+    public void UpdateTunnelNode(TunnelNode node)
+    {
+        lock (_lockObject)
+        {
+            var index = _config.TunnelNodes.FindIndex(n =>
+                string.Equals(n.Name, node.Name, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+            {
+                _config.TunnelNodes[index] = node;
+                SaveConfig();
+            }
+        }
+    }
+
+    public void DeleteTunnelNode(string name)
+    {
+        lock (_lockObject)
+        {
+            _config.TunnelNodes.RemoveAll(n =>
+                string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase));
+            SaveConfig();
+        }
+    }
+
     // Setting operations
     public List<Setting> GetSettings()
     {
@@ -484,4 +535,5 @@ public class GatewayConfig
     public List<RateLimit> RateLimits { get; set; } = new();
     public List<Setting> Settings { get; set; } = new();
     public List<StreamForward> StreamForwards { get; set; } = new();
+    public List<TunnelNode> TunnelNodes { get; set; } = new();
 }

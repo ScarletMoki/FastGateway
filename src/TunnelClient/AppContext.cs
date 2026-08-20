@@ -9,6 +9,8 @@ namespace TunnelClient;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     AllowTrailingCommas = true,
+    ReadCommentHandling = JsonCommentHandling.Skip,
+    PropertyNameCaseInsensitive = true,
     IgnoreReadOnlyFields = true,
     IgnoreReadOnlyProperties = true,
     IncludeFields = true,
@@ -17,11 +19,4 @@ namespace TunnelClient;
 [JsonSerializable(typeof(Tunnel))]
 internal partial class AppContext : JsonSerializerContext
 {
-    public static JsonSerializerOptions JsonOptions => new(Default.Options)
-    {
-        // 允许注释
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        // 忽略大小写
-        PropertyNameCaseInsensitive = true
-    };
 }

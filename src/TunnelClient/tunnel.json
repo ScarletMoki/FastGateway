@@ -5,27 +5,34 @@
       "Microsoft.Hosting.Lifetime": "Information"
     }
   },
-  "Port": 1881,
-  "Token": "Aa123456.",
-  "ServerUrl": "ws://127.0.0.1:1080",
-  "Name": "FastGateway1",
+  // 本地转发端口，0 表示自动选择空闲端口
+  "Port": 0,
+  // 节点密钥（面板创建节点时生成，形如 fgk_xxx）
+  "Key": "fgk_your-node-key",
+  // 服务器地址（ws/wss 或 http/https，按 Type 自动归一化）
+  "ServerUrl": "ws://127.0.0.1:8080",
+  // 节点名称（须与面板创建的节点一致）
+  "Name": "node1",
+  // 传输协议：ws 或 h2
   "Type": "ws",
-  // 支持h2,ws
+  // 服务端是否支持 HTTP/2（wss 时生效）
   "ServerHttp2Support": true,
-  // 服务端是否支持HTTP/2
-  "ReconnectInterval": 5000,
-  // 重连间隔，单位毫秒
-  "HeartbeatInterval": 30000,
-  // 心跳间隔，单位毫秒
+  // 重连间隔，单位秒
+  "ReconnectInterval": 5,
+  // 心跳间隔，单位秒（10-300）
+  "HeartbeatInterval": 30,
+  // 是否跳过 TLS 证书校验（自签名证书场景显式开启，默认 false）
+  "InsecureSkipVerify": false,
   "Proxy": [
     {
-      "Host": "www.cnblogs.com",
+      // 匹配的域名（为空则匹配所有域名）
+      "Domains": ["app.example.com"],
+      // 匹配的路由前缀
       "Route": "/",
-      // 匹配的域名
-      "Domains": [],
-      "LocalRemote": "https://www.cnblogs.com/",
-      "Name": "Test Proxy",
-      "Description": "This is a test proxy",
+      // 代理到的本地服务
+      "LocalRemote": "http://127.0.0.1:8080",
+      "Description": "示例代理规则",
+      // 是否启用
       "Enabled": true
     }
   ]

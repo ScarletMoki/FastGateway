@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Reveal, TRANSITION } from "@/components/motion";
+import { Reveal, StatusIndicator, TRANSITION } from "@/components/motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -73,11 +73,14 @@ export default function DashboardPage() {
 
   return (
     <TooltipProvider>
-      <div className="mx-auto max-w-7xl space-y-4 p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-6">
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-4">
-              <h1 className="hidden text-xl font-semibold tracking-tight lg:block">统计报表</h1>
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-semibold tracking-tight">统计报表</h1>
+                <StatusIndicator status="busy" label="30s 刷新" size="sm" />
+              </div>
               <TabsList>
                 {TABS.map((t) => (
                   <TabsTrigger

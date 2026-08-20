@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -16,16 +15,7 @@ internal class TunnelClientFactory(
     AgentTunnelFactory agentTunnelFactory)
     : IForwarderHttpClientFactory
 {
-    // TODO: These values should be populated by configuration so there's no need to remove
-    // channels.
-    private readonly ConcurrentDictionary<string, List<Stream>> _clusterConnections = new();
     private readonly SocketsHttpHandler _handler = CreateHandler(agentClientManager, agentTunnelFactory);
-
-    public List<Stream> GetConnectionChannel(string host)
-    {
-        return _clusterConnections.GetOrAdd(host.ToLowerInvariant(),
-            _ => new List<Stream>());
-    }
 
     public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context)
     {

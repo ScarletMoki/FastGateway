@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnimatedNumber, SwapFade } from "@/components/motion";
@@ -15,6 +16,10 @@ export interface StatTileProps {
   tone?: "default" | "danger" | "warning";
   loading?: boolean;
   icon?: ReactNode;
+  /** 可点开展开明细 */
+  expandable?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
 }
 
 export function StatTile({
@@ -26,18 +31,29 @@ export function StatTile({
   tone,
   loading,
   icon,
+  expandable,
+  selected,
+  onSelect,
 }: StatTileProps) {
-  return (
-    // relative：SwapFade 用 popLayout，退场元素会被提为 absolute，需要定位祖先
-    <div className="relative min-w-0 px-4 py-3">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        {icon}
-        <span className="truncate">{label}</span>
+  const body = (
+    <>
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1.5">
+          {icon}
+          <span className="truncate">{label}</span>
+        </span>
+        {expandable ? (
+          <ChevronDown
+            className={cn(
+              "h-3 w-3 shrink-0 transition-transform duration-200",
+              selected && "rotate-180 text-foreground"
+            )}
+          />
+        ) : null}
       </div>
       <SwapFade loading={!!loading} skeleton={<Skeleton className="mt-1.5 h-7 w-16" />}>
         <div
           className={cn(
-            // tabular-nums 必须保留：滚动时位数变化会逐帧改宽度，把 divide-x 网格挤得左右晃
             "mt-1 truncate text-2xl font-semibold tabular-nums",
             tone === "danger" && "text-red-500",
             tone === "warning" && "text-amber-500"
@@ -51,6 +67,26 @@ export function StatTile({
         </div>
       </SwapFade>
       {sub && !loading && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</div>}
-    </div>
+    </>
   );
+
+  if (expandable) {
+    return (
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-expanded={selected}
+        className={cn(
+          "relative min-w-0 w-full px-4 py-3 text-left transition-colors",
+          "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+          selected && "bg-muted/50"
+        )}
+      >
+        {selected && <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary" />}
+        {body}
+      </button>
+    );
+  }
+
+  return <div className="relative min-w-0 px-4 py-3">{body}</div>;
 }

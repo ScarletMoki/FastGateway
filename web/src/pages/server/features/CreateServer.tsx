@@ -438,7 +438,7 @@ export default function CreateServer({
                                 <SettingSwitch
                                     id="create-server-tunnel"
                                     label="启用隧道"
-                                    description="启用内网穿透隧道能力。"
+                                    description="在本服务端口挂载隧道接入端点，客户端节点凭密钥经此接入；节点与密钥请在「节点管理」页创建。"
                                     checked={value.enableTunnel}
                                     onCheckedChange={(next) =>
                                         setValue((prev) => ({

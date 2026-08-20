@@ -1,6 +1,6 @@
 ﻿import { deleteServer, enableServer, getServers, onlineServer, reloadServer } from "@/services/ServerService";
 import { getClientIpSourceShortLabel, Server } from "@/types";
-import { Reveal, Stagger, StaggerItem, TRANSITION } from "@/components/motion";
+import { Reveal, Stagger, StaggerItem, TRANSITION, StatusIndicator, CopyButton } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -8,17 +8,18 @@ import { useServerStore } from "@/store/server";
 import { 
     Server as ServerIcon, 
     Globe, 
-    Search,
-    ListChecks,
-    Shield,
-    Zap,
+    Search, 
+    ListChecks, 
+    Shield, 
+    Zap, 
     Settings, 
     Play, 
     Square, 
-    MoreVertical,
-    Trash2,
-    Loader2,
+    MoreVertical, 
+    Trash2, 
+    Loader2, 
     X,
+    ArrowRight
 } from 'lucide-react';
 import { useNavigate } from "react-router-dom";
 import UpdateServer from "./UpdateServer";
@@ -27,7 +28,7 @@ import {
     DropdownMenu, 
     DropdownMenuContent, 
     DropdownMenuItem, 
-    DropdownMenuSeparator,
+    DropdownMenuSeparator, 
     DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -231,8 +232,8 @@ const ProxyList = memo(() => {
         return (
             <div
                 className={cn(
-                    "group flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md focus-within:border-primary/50 sm:flex-row sm:items-start sm:justify-between sm:p-5",
-                    selected && "border-primary/50 bg-primary/[0.03] ring-1 ring-primary/15",
+                    "group flex flex-col gap-4 rounded-xl border bg-card/90 p-4 shadow-2xs transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-within:border-primary/50 sm:flex-row sm:items-start sm:justify-between sm:p-5",
+                    selected && "border-primary/50 bg-primary/[0.04] ring-1 ring-primary/20",
                     !server.enable && "opacity-75"
                 )}
             >
@@ -250,31 +251,28 @@ const ProxyList = memo(() => {
                             />
                         </div>
                     ) : null}
+                    
                     <div
                         className={cn(
-                            "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-sm transition-transform duration-200 group-hover:scale-105",
+                            "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-inner transition-transform duration-200 group-hover:scale-105",
                             server.onLine
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                : "bg-muted text-muted-foreground"
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                : "border-border bg-muted text-muted-foreground"
                         )}
                     >
                         <ServerIcon className="h-4 w-4" />
                     </div>
 
-                    <div className="min-w-0 flex-1 space-y-3">
+                    <div className="min-w-0 flex-1 space-y-2.5">
                         <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="min-w-0 truncate font-semibold text-base">
+                            <h3 className="min-w-0 truncate font-semibold text-base text-foreground group-hover:text-primary transition-colors">
                                 {server.name}
                             </h3>
-                            <Badge
-                                variant={server.onLine ? "default" : "secondary"}
-                                className={cn(
-                                    "h-5 text-xs",
-                                    server.onLine && "bg-emerald-500 hover:bg-emerald-500/90"
-                                )}
-                            >
-                                {server.onLine ? "在线" : "离线"}
-                            </Badge>
+                            <StatusIndicator
+                                status={server.onLine ? "online" : "offline"}
+                                label={server.onLine ? "运行中" : "已停止"}
+                                size="sm"
+                            />
                             <Badge variant="outline" className="h-5 text-xs font-normal">
                                 {server.enable ? "已启用" : "已禁用"}
                             </Badge>
@@ -287,38 +285,46 @@ const ProxyList = memo(() => {
                                 navigate(`/server/${server.id}`);
                             }}
                             disabled={!server.id || batchMode}
-                            className="w-full rounded-sm text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 line-clamp-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="w-full rounded-sm text-left text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 line-clamp-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            {server.description || "暂无描述"}
+                            {server.description || "暂无描述信息，点击可进入详情配置路由与负载规则。"}
                         </button>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant="outline" className="h-6 gap-1 font-mono text-xs">
-                                <Globe className="h-3.5 w-3.5" />
+                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                            <Badge variant="outline" className="h-6 gap-1 font-mono text-xs bg-background/60">
+                                <Globe className="h-3.5 w-3.5 text-primary" />
                                 :{server.listen}
                             </Badge>
+
+                            <CopyButton
+                                text={`http${server.isHttps ? 's' : ''}://localhost:${server.listen}`}
+                                successMessage="已复制服务监听地址"
+                                className="h-6 w-6 text-muted-foreground"
+                            />
+
                             <Badge variant="outline" className="h-6 text-xs font-normal text-muted-foreground">
                                 IP · {getClientIpSourceShortLabel(server.clientIpSource)}
                             </Badge>
+
                             {hasFeatures ? (
                                 <div className="flex flex-wrap gap-1.5">
                                     {server.isHttps && (
-                                        <Badge variant="outline" className="text-xs">
-                                            HTTPS
+                                        <Badge variant="outline" className="text-xs border-violet-500/30 text-violet-600 dark:text-violet-400">
+                                            HTTPS / TLS
                                         </Badge>
                                     )}
                                     {server.enableBlacklist && (
-                                        <Badge variant="outline" className="text-xs">
+                                        <Badge variant="outline" className="text-xs border-destructive/30 text-destructive">
                                             黑名单
                                         </Badge>
                                     )}
                                     {server.enableWhitelist && (
-                                        <Badge variant="outline" className="text-xs">
+                                        <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
                                             白名单
                                         </Badge>
                                     )}
                                     {server.enableTunnel && (
-                                        <Badge variant="outline" className="text-xs">
+                                        <Badge variant="outline" className="text-xs border-sky-500/30 text-sky-600 dark:text-sky-400">
                                             隧道
                                         </Badge>
                                     )}
@@ -339,99 +345,103 @@ const ProxyList = memo(() => {
                 </div>
 
                 {batchMode ? null : (
-                    <div className="flex flex-wrap items-center gap-2 border-t pt-3 sm:shrink-0 sm:justify-end sm:border-t-0 sm:pt-0 sm:transition-transform sm:duration-200 sm:group-hover:translate-x-0.5">
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => navigate(`/server/${server.id}`)}
-                        disabled={!server.id}
-                    >
-                        路由
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                            if (!server.id) return;
-                            onlineServer(server.id).then(() => {
-                                loadServers();
-                            });
-                        }}
-                        disabled={!server.id}
-                    >
-                        {server.onLine ? (
-                            <>
-                                <Square className="mr-2 h-4 w-4" />
-                                停止
-                            </>
-                        ) : (
-                            <>
-                                <Play className="mr-2 h-4 w-4" />
-                                启动
-                            </>
-                        )}
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2 border-t pt-3 sm:shrink-0 sm:justify-end sm:border-t-0 sm:pt-0">
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => navigate(`/server/${server.id}`)}
+                            disabled={!server.id}
+                            className="text-xs font-medium"
+                        >
+                            路由配置
+                            <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                        </Button>
 
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="h-4 w-4" />
-                                <span className="sr-only">打开菜单</span>
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    setServerToEdit(server);
-                                    setEditVisible(true);
-                                }}
-                            >
-                                <Settings className="mr-2 h-4 w-4" />
-                                编辑
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    if (!server.id) return;
-                                    enableServer(server.id).then(() => {
-                                        loadServers();
-                                    });
-                                }}
-                                disabled={!server.id}
-                            >
-                                <Shield className="mr-2 h-4 w-4" />
-                                {server.enable ? "禁用" : "启用"}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    if (!server.id) return;
-                                    reloadServer(server.id)
-                                        .then(() => {
-                                            toast.success("刷新成功");
-                                        })
-                                        .catch(() => {
-                                            toast.error("刷新失败");
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                                if (!server.id) return;
+                                onlineServer(server.id).then(() => {
+                                    loadServers();
+                                });
+                            }}
+                            disabled={!server.id}
+                            className="text-xs"
+                        >
+                            {server.onLine ? (
+                                <>
+                                    <Square className="mr-1.5 h-3.5 w-3.5" />
+                                    停止
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="mr-1.5 h-3.5 w-3.5" />
+                                    启动
+                                </>
+                            )}
+                        </Button>
+
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreVertical className="h-4 w-4" />
+                                    <span className="sr-only">打开菜单</span>
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem
+                                    onClick={() => {
+                                        setServerToEdit(server);
+                                        setEditVisible(true);
+                                    }}
+                                >
+                                    <Settings className="mr-2 h-4 w-4" />
+                                    编辑配置
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    onClick={() => {
+                                        if (!server.id) return;
+                                        enableServer(server.id).then(() => {
+                                            loadServers();
                                         });
-                                }}
-                                disabled={!server.id}
-                            >
-                                <Zap className="mr-2 h-4 w-4" />
-                                刷新路由
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                                onClick={() => {
-                                    if (!server.id) return;
-                                    setDeleteDialog({ open: true, items: [server] });
-                                }}
-                                className="text-destructive focus:text-destructive"
-                                disabled={!server.id}
-                            >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                删除
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                                    }}
+                                    disabled={!server.id}
+                                >
+                                    <Shield className="mr-2 h-4 w-4" />
+                                    {server.enable ? "禁用服务" : "启用服务"}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    onClick={() => {
+                                        if (!server.id) return;
+                                        reloadServer(server.id)
+                                            .then(() => {
+                                                toast.success("刷新成功");
+                                            })
+                                            .catch(() => {
+                                                toast.error("刷新失败");
+                                            });
+                                    }}
+                                    disabled={!server.id}
+                                >
+                                    <Zap className="mr-2 h-4 w-4" />
+                                    刷新路由
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    onClick={() => {
+                                        if (!server.id) return;
+                                        setDeleteDialog({ open: true, items: [server] });
+                                    }}
+                                    className="text-destructive focus:text-destructive"
+                                    disabled={!server.id}
+                                >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    删除
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 )}
             </div>
@@ -449,7 +459,7 @@ const ProxyList = memo(() => {
                                 <Input
                                     value={query}
                                     onChange={(e) => setQuery(e.target.value)}
-                                    placeholder="搜索名称、描述或端口…"
+                                    placeholder="搜索服务名称、描述或监听端口…"
                                     className="pl-9"
                                 />
                             </div>
@@ -482,7 +492,7 @@ const ProxyList = memo(() => {
                                 />
                                 <Label
                                     htmlFor="enabled-only"
-                                    className="text-sm font-medium text-muted-foreground"
+                                    className="text-sm font-medium text-muted-foreground cursor-pointer"
                                 >
                                     仅启用
                                 </Label>
@@ -493,25 +503,27 @@ const ProxyList = memo(() => {
                             <Badge variant="secondary" className="font-normal">
                                 {filteredServers.length}/{servers.length}
                             </Badge>
+                            
                             {(query || statusFilter !== "all" || enabledOnly) && (
                                 <Button variant="ghost" size="sm" onClick={clearFilters}>
-                                    <X className="mr-2 h-4 w-4" />
+                                    <X className="mr-1.5 h-4 w-4" />
                                     清除
                                 </Button>
                             )}
+                            
                             <Button
                                 variant={batchMode ? "secondary" : "outline"}
                                 size="sm"
                                 onClick={toggleBatchMode}
                             >
-                                <ListChecks className="mr-2 h-4 w-4" />
+                                <ListChecks className="mr-1.5 h-4 w-4" />
                                 {batchMode ? "完成" : "批量"}
                             </Button>
                         </div>
                     </div>
 
                     {batchMode ? (
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-border/50 pt-3">
                             <div className="flex items-center gap-2">
                                 <Checkbox
                                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
@@ -626,12 +638,12 @@ const ProxyList = memo(() => {
                 <CardContent className="p-3 sm:p-4">
                     {isLoading ? (
                         <div className="grid gap-3">
-                            {Array.from({ length: 6 }).map((_, index) => (
+                            {Array.from({ length: 4 }).map((_, index) => (
                                 <div
                                     key={index}
                                     className="flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm sm:flex-row sm:p-5"
                                 >
-                                    <Skeleton className="h-9 w-9 rounded-lg" />
+                                    <Skeleton className="h-10 w-10 rounded-xl" />
                                     <div className="flex-1 space-y-3">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <Skeleton className="h-4 w-40" />
@@ -642,13 +654,11 @@ const ProxyList = memo(() => {
                                         <div className="flex flex-wrap items-center gap-2">
                                             <Skeleton className="h-6 w-24 rounded-full" />
                                             <Skeleton className="h-6 w-16 rounded-full" />
-                                            <Skeleton className="h-6 w-16 rounded-full" />
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <Skeleton className="h-8 w-16" />
                                         <Skeleton className="h-8 w-20" />
-                                        <Skeleton className="h-8 w-8 rounded-md" />
+                                        <Skeleton className="h-8 w-16" />
                                     </div>
                                 </div>
                             ))}
@@ -681,7 +691,6 @@ const ProxyList = memo(() => {
                     ) : (
                         <Stagger className="grid gap-3">
                             {filteredServers.map((server) => (
-                                // layout：筛选/排序变化时平滑重排而不是瞬移
                                 <StaggerItem
                                     key={server.id ?? server.name}
                                     layout

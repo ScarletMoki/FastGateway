@@ -238,30 +238,35 @@ public static class Gateway
         {
             var inMemoryConfigProvider = webApplication.Services.GetRequiredService<InMemoryConfigProvider>();
 
-            var tunnels = TunnelClientProxy.GetAllClients();
+            // 仅注入注册到本 Server 且控制连接在线的节点，断线即随下一次重载清理（避免死路由）
+            foreach (var state in TunnelClientProxy.GetAllStates())
+            {
+                if (state.ServerId != server.Id || state.Client == null || state.Tunnel == null) continue;
 
+                var node = TunnelNodeStore.GetNode(state.Tunnel.Name);
+                if (node is not { Enabled: true }) continue;
 
-            if (tunnels is { Count: > 0 })
-                foreach (var tunnel in tunnels)
-                    foreach (var proxy in tunnel.Proxy)
+                foreach (var proxy in state.Tunnel.Proxy)
+                {
+                    // 面板覆盖优先于客户端上报的启用状态
+                    var overrideItem = node.ProxyOverrides.FirstOrDefault(o => o.ProxyId == proxy.Id);
+                    var effectiveEnabled = overrideItem?.Enabled ?? proxy.Enabled;
+                    if (!effectiveEnabled) continue;
+
+                    domainNames.Add(new DomainName
                     {
-                        if (string.IsNullOrEmpty(proxy.Id))
-                            proxy.Id = Guid.NewGuid().ToString("N");
-
-                        var value = new DomainName
-                        {
-                            Enable = proxy.Enabled,
-                            // 热重载必须稳定 cluster/route Id，否则 YARP 会拆掉旧 HttpClient 再建一份
-                            Id = $"tunnel:{tunnel.Name}:{proxy.Id}",
-                            Path = proxy.Route,
-                            Domains = proxy.Domains,
-                            ServiceType = ServiceType.Service,
-                            Service = $"http://node_{tunnel.Name}{proxy.Route}"
-                        };
-
-                        if (!string.IsNullOrEmpty(proxy.Host)) value.Host = proxy.Host;
-                        domainNames.Add(value);
-                    }
+                        Enable = true,
+                        // 热重载必须稳定 cluster/route Id，否则 YARP 会拆掉旧 HttpClient 再建一份；
+                        // proxy.Id 为内容哈希，跨注册保持稳定
+                        Id = $"tunnel:{state.Tunnel.Name}:{proxy.Id}",
+                        Path = proxy.Route,
+                        Domains = proxy.Domains,
+                        ServiceType = ServiceType.Service,
+                        Service = $"http://node_{state.Tunnel.Name}{proxy.Route}",
+                        Host = string.IsNullOrEmpty(proxy.Host) ? null : proxy.Host
+                    });
+                }
+            }
 
             var (routes, clusters) = BuildConfig(domainNames.ToArray(), server);
 
@@ -414,6 +419,8 @@ public static class Gateway
             var (routes, clusters) = BuildConfig(domainNames, server);
 
             builder.Services.AddTunnel();
+            // 供 AgentManagerMiddleware 获知节点连接所属的网关 Server（断线清理路由需要）
+            builder.Services.AddSingleton(server);
             builder.Services.AddSingleton<StandardForwarderHttpClientFactory>();
             builder.Services.AddSingleton<FastGatewayForwarderHttpClientFactory>();
             builder.Services.AddSingleton<IForwarderHttpClientFactory>(s => s.GetRequiredService<FastGatewayForwarderHttpClientFactory>());
@@ -673,47 +680,52 @@ public static class Gateway
 
             GatewayWebApplications.TryAdd(server.Id, app);
 
-            app.Use(async (context, next) =>
+            // 隧道接入端点仅在 Server 开启隧道时挂载，使 EnableTunnel 语义真正生效
+            if (server.EnableTunnel)
             {
-                if (context.Request.Path == "/internal/gateway/Server/register")
+                app.Use(async (context, next) =>
                 {
-                    var tunnel = context.RequestServices.GetRequiredService<TunnelClientProxy>();
-                    var token = context.Request.Query["token"].ToString();
-                    if (string.IsNullOrEmpty(token) || FastGatewayOptions.TunnelToken != token)
+                    if (context.Request.Path == "/internal/gateway/Server/register")
                     {
-                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        var dto = await context.Request.ReadFromJsonAsync(AppJsonContext.Default.Tunnel);
+                        if (dto == null || string.IsNullOrWhiteSpace(dto.Name))
+                        {
+                            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                            await context.Response.WriteAsJsonAsync(
+                                new CodeMessageDto { Code = 400, Message = "请求数据格式错误" },
+                                AppJsonContext.Default.CodeMessageDto);
+                            return;
+                        }
+
+                        // 节点级密钥认证；全局 TunnelToken 兼容旧客户端并自动建档
+                        var credential = TunnelNodeStore.ExtractCredential(context)
+                                         ?? dto.Token;
+                        var auth = TunnelNodeStore.Authenticate(dto.Name, credential);
+                        if (!auth.Success)
+                        {
+                            context.Response.StatusCode = auth.StatusCode;
+                            await context.Response.WriteAsJsonAsync(
+                                new CodeMessageDto { Code = auth.StatusCode, Message = auth.Message },
+                                AppJsonContext.Default.CodeMessageDto);
+                            return;
+                        }
+
+                        TunnelClientProxy.Register(dto, server);
+                        context.Response.StatusCode = StatusCodes.Status200OK;
                         await context.Response.WriteAsJsonAsync(
-                            new CodeMessageDto { Code = 401, Message = "未授权的请求" },
+                            new CodeMessageDto { Code = 200, Message = "注册成功" },
                             AppJsonContext.Default.CodeMessageDto);
                         return;
                     }
 
-                    var dto = await context.Request.ReadFromJsonAsync(AppJsonContext.Default.Tunnel);
-                    if (dto == null)
-                    {
-                        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                        await context.Response.WriteAsJsonAsync(
-                            new CodeMessageDto { Code = 400, Message = "请求数据格式错误" },
-                            AppJsonContext.Default.CodeMessageDto);
-                        return;
-                    }
-
-                    tunnel.CreateClient(dto, server, domainNames);
-                    context.Response.StatusCode = StatusCodes.Status200OK;
-                    await context.Response.WriteAsJsonAsync(
-                        new CodeMessageDto { Code = 200, Message = "注册成功" },
-                        AppJsonContext.Default.CodeMessageDto);
-                    return;
-                }
-
-
-                await next(context);
-            });
-            app.Map("/internal/gateway/Server", builder =>
-            {
-                builder.UseMiddleware<AgentManagerMiddleware>();
-                builder.UseMiddleware<AgentManagerTunnelMiddleware>();
-            });
+                    await next(context);
+                });
+                app.Map("/internal/gateway/Server", builder =>
+                {
+                    builder.UseMiddleware<AgentManagerMiddleware>();
+                    builder.UseMiddleware<AgentManagerTunnelMiddleware>();
+                });
+            }
 
             app.MapReverseProxy();
 
@@ -996,6 +1008,17 @@ public static class Gateway
                 },
                 Metadata = routeMetadata
             };
+
+            // 隧道目的地需保留访客原始 Host：客户端本地 YARP 按域名匹配代理规则，
+            // 若被改写成 node_{name} 会全部 404。显式配置 Host 的除外（由目的地 Host 覆盖）。
+            if (IsTunnelService(domainName.Service) && string.IsNullOrEmpty(domainName.Host))
+                route = route with
+                {
+                    Transforms =
+                    [
+                        new Dictionary<string, string> { ["RequestHeaderOriginalHost"] = "true" }
+                    ]
+                };
 
             if (domainName.ServiceType == ServiceType.Service)
             {

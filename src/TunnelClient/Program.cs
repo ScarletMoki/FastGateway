@@ -3,32 +3,29 @@ using TunnelClient;
 using TunnelClient.Model;
 using AppContext = System.AppContext;
 
-var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions()
+var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
 {
     Args = args,
-    ContentRootPath = AppContext.BaseDirectory,
+    ContentRootPath = AppContext.BaseDirectory
 });
 
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
-// 读取args -c 配置文件路径
-if (args.Length > 0 && args[0].StartsWith("-c", StringComparison.OrdinalIgnoreCase))
+Tunnel tunnel;
+try
 {
-    var configFilePath = args[1].Trim();
-    if (!string.IsNullOrEmpty(configFilePath) && File.Exists(configFilePath))
-    {
-        builder.Configuration.AddJsonFile(configFilePath, optional: false, reloadOnChange: true);
-    }
-    else
-    {
-        Console.WriteLine("配置文件不存在或路径错误: " + configFilePath);
-        return;
-    }
+    tunnel = Tunnel.Load(args);
+    tunnel.Validate();
 }
-else
+catch (ArgumentException e)
 {
-    throw new ArgumentException("请使用 -c 参数指定配置文件路径，参考：./FastGateway.TunnelClient -c ./tunnel.json");
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine(e.Message);
+    Console.ResetColor();
+    return;
 }
+
+var localPort = tunnel.ResolveLocalPort();
 
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 {
@@ -36,8 +33,9 @@ if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
     builder.Services.AddWindowsService();
 }
 
-var (routeConfigs, clusterConfigs) = Tunnel.ToYarpOption();
+var (routeConfigs, clusterConfigs) = Tunnel.ToYarpOption(tunnel);
 
+builder.Services.AddSingleton(tunnel);
 builder.Services.AddReverseProxy()
     .LoadFromMemory(routeConfigs, clusterConfigs);
 
@@ -47,4 +45,23 @@ var app = builder.Build();
 
 app.MapReverseProxy();
 
-await app.RunAsync("http://localhost:" + Tunnel.GetTunnel().Port);
+var enabledProxyCount = tunnel.Proxy.Count(p => p.Enabled);
+Console.WriteLine("========== FastGateway 隧道客户端 ==========");
+Console.WriteLine($"  节点名称：{tunnel.Name}");
+Console.WriteLine($"  服务器　：{tunnel.ServerUrl}");
+Console.WriteLine($"  传输协议：{(tunnel.IsHttp2 ? "HTTP/2" : "WebSocket")}");
+Console.WriteLine($"  代理规则：{enabledProxyCount} 条启用 / 共 {tunnel.Proxy.Length} 条");
+Console.WriteLine($"  本地端口：{localPort}");
+Console.WriteLine($"  心跳间隔：{tunnel.HeartbeatInterval}s，重连间隔：{tunnel.ReconnectInterval}s");
+if (tunnel.InsecureSkipVerify)
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine("  警告　　：已跳过 TLS 证书校验（InsecureSkipVerify），仅建议自签名证书环境使用");
+    Console.ResetColor();
+}
+
+if (enabledProxyCount == 0)
+    Console.WriteLine("  提示　　：当前没有启用的代理规则，节点上线后可在面板查看状态，稍后可补充规则");
+Console.WriteLine("===========================================");
+
+await app.RunAsync("http://localhost:" + localPort);

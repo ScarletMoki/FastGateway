@@ -86,6 +86,9 @@ public static class Program
         {
             var configService = scope.ServiceProvider.GetRequiredService<ConfigurationService>();
 
+            // 隧道节点持久化桥接：网关子应用与管理 API 统一经主实例读写节点数据
+            Tunnels.TunnelNodeStore.Initialize(configService);
+
             // 集群中枢：订阅配置变更，主网关角色下自动向从节点推送
             ClusterHub.Initialize(configService, scope.ServiceProvider.GetRequiredService<ClusterStateService>());
 

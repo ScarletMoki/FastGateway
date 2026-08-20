@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart } from "@/components/ui/bar-chart";
-import { AnimatedNumber } from "@/components/motion";
+import { AnimatedNumber, StatusIndicator } from "@/components/motion";
 import { getQpsData } from "@/services/QpsService";
 import { usePolling } from "../hooks/usePolling";
 import { formatInt } from "../types";
@@ -32,7 +32,7 @@ export function QpsSparkCard({ className }: { className?: string }) {
             <Zap className="h-4 w-4 text-amber-500" />
             实时 QPS
           </span>
-          <span className="text-xs font-normal text-muted-foreground">峰值 {peak}</span>
+          <StatusIndicator status={qps > 0 ? "busy" : "online"} label={`峰值 ${peak}`} size="sm" />
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">

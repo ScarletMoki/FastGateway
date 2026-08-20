@@ -23,7 +23,7 @@ import {
     DialogTitle,
 } from "@/components/animate-ui/components/ui/dialog";
 import { Input } from "@/components/animate-ui/components/ui/input";
-import { AnimatedNumber, Reveal, Stagger, StaggerItem } from "@/components/motion";
+import { AnimatedNumber, Reveal, Stagger, StaggerItem, CopyButton } from "@/components/motion";
 import { cn } from "@/lib/utils";
 import { ApplyCert, DeleteCert, GetCert } from "@/services/CertService";
 import { message } from "@/utils/toast";
@@ -31,7 +31,6 @@ import { differenceInCalendarDays, format } from "date-fns";
 import {
     AlertTriangle,
     CheckCircle2,
-    Copy,
     Loader2,
     Plus,
     RefreshCw,
@@ -74,34 +73,6 @@ function formatMaybeDate(value?: string | null, fmt = "yyyy-MM-dd HH:mm") {
     const date = safeParseDate(value);
     if (!date) return "-";
     return format(date, fmt);
-}
-
-function copyToClipboard(text: string) {
-    const value = text?.trim();
-    if (!value) return Promise.reject(new Error("empty"));
-
-    if (navigator?.clipboard?.writeText) {
-        return navigator.clipboard.writeText(value);
-    }
-
-    return new Promise<void>((resolve, reject) => {
-        try {
-            const textarea = document.createElement("textarea");
-            textarea.value = value;
-            textarea.style.position = "fixed";
-            textarea.style.top = "0";
-            textarea.style.left = "0";
-            textarea.style.opacity = "0";
-            document.body.appendChild(textarea);
-            textarea.focus();
-            textarea.select();
-            const ok = document.execCommand("copy");
-            document.body.removeChild(textarea);
-            ok ? resolve() : reject(new Error("copy failed"));
-        } catch (err) {
-            reject(err);
-        }
-    });
 }
 
 export default function CertPage() {
@@ -176,7 +147,7 @@ export default function CertPage() {
                 if (aDate) return -1;
                 if (bDate) return 1;
                 return String(a.domain ?? "").localeCompare(
-                    String(b.domain ?? ""),
+                    String(a.domain ?? ""),
                     "zh-CN"
                 );
             });
@@ -254,32 +225,17 @@ export default function CertPage() {
                 render: (_: unknown, item: CertItem) => {
                     return (
                         <div className="flex items-center gap-2">
-                            <span className="font-medium">{item.domain || "-"}</span>
+                            <span className="font-semibold">{item.domain || "-"}</span>
                             {item.type === 1 ? (
                                 <Badge
                                     variant="outline"
-                                    className="border-violet-200 bg-violet-50 font-normal text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-300"
+                                    className="border-violet-200 bg-violet-50 font-normal text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-300 text-xs"
                                 >
                                     自定义
                                 </Badge>
                             ) : null}
                             {item.domain ? (
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                    onClick={async () => {
-                                        try {
-                                            await copyToClipboard(item.domain);
-                                            message.success("已复制域名");
-                                        } catch {
-                                            message.error("复制失败");
-                                        }
-                                    }}
-                                >
-                                    <Copy className="h-4 w-4" />
-                                    <span className="sr-only">复制域名</span>
-                                </Button>
+                                <CopyButton text={item.domain} className="h-6 w-6" successMessage="已复制域名" />
                             ) : null}
                         </div>
                     );
@@ -290,7 +246,7 @@ export default function CertPage() {
                 dataIndex: "email",
                 key: "email",
                 render: (_: unknown, item: CertItem) => (
-                    <span className="text-muted-foreground">
+                    <span className="text-muted-foreground text-xs font-mono">
                         {item.email || "-"}
                     </span>
                 ),
@@ -306,7 +262,7 @@ export default function CertPage() {
                         <Badge
                             variant="outline"
                             className={cn(
-                                "font-normal",
+                                "font-normal text-xs",
                                 enabled &&
                                     "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300"
                             )}
@@ -334,26 +290,26 @@ export default function CertPage() {
                             0: {
                                 label: "未续期",
                                 variant: "secondary" as const,
-                                className: "font-normal",
+                                className: "font-normal text-xs",
                                 Icon: Shield,
                             },
                             1: {
                                 label: "续期成功",
                                 variant: "default" as const,
                                 className:
-                                    "bg-emerald-500 hover:bg-emerald-500/90 font-normal",
+                                    "bg-emerald-500 hover:bg-emerald-500/90 font-normal text-xs",
                                 Icon: CheckCircle2,
                             },
                             2: {
                                 label: "续期失败",
                                 variant: "destructive" as const,
-                                className: "font-normal",
+                                className: "font-normal text-xs",
                                 Icon: AlertTriangle,
                             },
                         }[stats] ?? {
                             label: "未知",
                             variant: "secondary" as const,
-                            className: "font-normal",
+                            className: "font-normal text-xs",
                             Icon: Shield,
                         };
 
@@ -375,7 +331,7 @@ export default function CertPage() {
                             ? (value as string | null | undefined)
                             : String(value);
                     return (
-                        <span className="text-muted-foreground">{formatMaybeDate(raw)}</span>
+                        <span className="text-muted-foreground text-xs">{formatMaybeDate(raw)}</span>
                     );
                 },
             },
@@ -389,7 +345,7 @@ export default function CertPage() {
                             ? (value as string | null | undefined)
                             : String(value);
                     const date = safeParseDate(raw);
-                    if (!date) return <span className="text-muted-foreground">-</span>;
+                    if (!date) return <span className="text-muted-foreground text-xs">-</span>;
 
                     const daysLeft = differenceInCalendarDays(date, new Date());
                     const isExpired = daysLeft < 0;
@@ -397,14 +353,14 @@ export default function CertPage() {
 
                     return (
                         <div className="flex flex-col gap-1">
-                            <span className={cn(isExpired && "text-destructive")}>
+                            <span className={cn("text-xs font-mono", isExpired && "text-destructive")}>
                                 {format(date, "yyyy-MM-dd HH:mm")}
                             </span>
                             <div>
                                 <Badge
                                     variant={isExpired ? "destructive" : "outline"}
                                     className={cn(
-                                        "font-normal",
+                                        "font-normal text-[11px]",
                                         !isExpired &&
                                             isSoon &&
                                             "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300"
@@ -436,8 +392,9 @@ export default function CertPage() {
                                         setUploadItem(item);
                                         setUploadVisible(true);
                                     }}
+                                    className="text-xs"
                                 >
-                                    <Upload className="mr-2 h-4 w-4" />
+                                    <Upload className="mr-1.5 h-3.5 w-3.5" />
                                     重新上传
                                 </Button>
                             ) : isWildcard ? (
@@ -446,6 +403,7 @@ export default function CertPage() {
                                     size="sm"
                                     disabled={loading}
                                     onClick={() => setDnsDialog({ open: true, item })}
+                                    className="text-xs"
                                 >
                                     DNS 验证
                                 </Button>
@@ -455,10 +413,11 @@ export default function CertPage() {
                                     size="sm"
                                     disabled={applying || loading}
                                     onClick={() => handleApply(item)}
+                                    className="text-xs"
                                 >
                                     {applying ? (
                                         <>
-                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                                             申请中
                                         </>
                                     ) : (
@@ -469,11 +428,11 @@ export default function CertPage() {
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                className="text-destructive hover:text-destructive/90"
+                                className="text-destructive hover:text-destructive/90 text-xs"
                                 disabled={loading}
                                 onClick={() => setDeleteDialog({ open: true, item })}
                             >
-                                <Trash2 className="mr-2 h-4 w-4" />
+                                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                                 删除
                             </Button>
                         </div>
@@ -532,327 +491,327 @@ export default function CertPage() {
 
             <Stagger className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <StaggerItem hoverLift>
-                <Card className="h-full border-border/60">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">
-                            总证书
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                        <div className="text-2xl font-semibold tabular-nums">
-                            <AnimatedNumber value={pagination.total} />
-                        </div>
-                        <p className="text-xs text-muted-foreground">按分页接口统计总数</p>
-                    </CardContent>
-                </Card>
-                </StaggerItem>
-
-                <StaggerItem hoverLift>
-                <Card className="h-full border-border/60">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">
-                            本页证书
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                        <div className="text-2xl font-semibold tabular-nums">
-                            <AnimatedNumber value={stats.pageTotal} />
-                        </div>
-                        <p className="text-xs text-muted-foreground">已加载当前页数据量</p>
-                    </CardContent>
-                </Card>
-                </StaggerItem>
-
-                <StaggerItem hoverLift>
-                <Card className="h-full border-border/60">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">
-                            自动续期
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                        <div className="text-2xl font-semibold tabular-nums">
-                            <AnimatedNumber value={stats.autoRenewCount} />
-                        </div>
-                        <p className="text-xs text-muted-foreground">当前页启用自动续期</p>
-                    </CardContent>
-                </Card>
-                </StaggerItem>
-
-                <StaggerItem hoverLift>
-                <Card className="h-full border-border/60">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">
-                            风险提示
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                        <div className="flex items-baseline gap-3">
+                    <Card className="h-full border-border/60 bg-card/90">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                                总证书
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1">
                             <div className="text-2xl font-semibold tabular-nums">
-                                <AnimatedNumber value={stats.expiringSoon} />
+                                <AnimatedNumber value={pagination.total} />
                             </div>
-                            <Badge
-                                variant="outline"
-                                className={cn(
-                                    "font-normal",
-                                    stats.failedCount > 0 &&
-                                        "border-destructive/40 text-destructive"
-                                )}
-                            >
-                                续期失败 {stats.failedCount}
-                            </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            15 天内到期（当前页）
-                        </p>
-                    </CardContent>
-                </Card>
+                            <p className="text-xs text-muted-foreground">按分页接口统计总数</p>
+                        </CardContent>
+                    </Card>
+                </StaggerItem>
+
+                <StaggerItem hoverLift>
+                    <Card className="h-full border-border/60 bg-card/90">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                                本页证书
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1">
+                            <div className="text-2xl font-semibold tabular-nums">
+                                <AnimatedNumber value={stats.pageTotal} />
+                            </div>
+                            <p className="text-xs text-muted-foreground">已加载当前页数据量</p>
+                        </CardContent>
+                    </Card>
+                </StaggerItem>
+
+                <StaggerItem hoverLift>
+                    <Card className="h-full border-border/60 bg-card/90">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                                自动续期
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1">
+                            <div className="text-2xl font-semibold tabular-nums">
+                                <AnimatedNumber value={stats.autoRenewCount} />
+                            </div>
+                            <p className="text-xs text-muted-foreground">当前页启用自动续期</p>
+                        </CardContent>
+                    </Card>
+                </StaggerItem>
+
+                <StaggerItem hoverLift>
+                    <Card className="h-full border-border/60 bg-card/90">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                                风险提示
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1">
+                            <div className="flex items-baseline gap-3">
+                                <div className="text-2xl font-semibold tabular-nums">
+                                    <AnimatedNumber value={stats.expiringSoon} />
+                                </div>
+                                <Badge
+                                    variant="outline"
+                                    className={cn(
+                                        "font-normal",
+                                        stats.failedCount > 0 &&
+                                            "border-destructive/40 text-destructive"
+                                    )}
+                                >
+                                    续期失败 {stats.failedCount}
+                                </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                15 天内到期（当前页）
+                            </p>
+                        </CardContent>
+                    </Card>
                 </StaggerItem>
             </Stagger>
 
             <Reveal delay={0.12}>
-            <Card className="border-border/60">
-                <CardHeader className="space-y-2 pb-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <CardTitle className="text-base">证书列表</CardTitle>
-                            <CardDescription>
-                                搜索与筛选仅作用于当前页数据
-                            </CardDescription>
+                <Card className="border-border/60 bg-card/90">
+                    <CardHeader className="space-y-2 pb-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <CardTitle className="text-base">证书列表</CardTitle>
+                                <CardDescription>
+                                    搜索与筛选仅作用于当前页数据
+                                </CardDescription>
+                            </div>
+                            <Badge variant="secondary" className="font-normal">
+                                {filteredData.length}/{data.length}
+                            </Badge>
                         </div>
-                        <Badge variant="secondary" className="font-normal">
-                            {filteredData.length}/{data.length}
-                        </Badge>
-                    </div>
 
-                    <Accordion type="single" collapsible className="w-full">
-                        <AccordionItem value="help" className="border-none">
-                            <AccordionHeader className="flex">
-                                <AccordionTrigger className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-                                    使用说明
-                                </AccordionTrigger>
-                            </AccordionHeader>
-                            <AccordionContent className="pt-2">
-                                <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
-                                    <ul className="list-disc space-y-1 pl-5">
-                                        <li>先新增域名与邮箱配置，再点击“申请证书”触发签发/续期。</li>
-                                        <li>建议开启自动续期，表格会显示续期结果与证书到期时间。</li>
-                                        <li>表格按到期时间排序，15 天内到期会高亮提示。</li>
-                                    </ul>
+                        <Accordion type="single" collapsible className="w-full">
+                            <AccordionItem value="help" className="border-none">
+                                <AccordionHeader className="flex">
+                                    <AccordionTrigger className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                                        使用说明
+                                    </AccordionTrigger>
+                                </AccordionHeader>
+                                <AccordionContent className="pt-2">
+                                    <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                                        <ul className="list-disc space-y-1 pl-5">
+                                            <li>先新增域名与邮箱配置，再点击“申请证书”触发签发/续期。</li>
+                                            <li>建议开启自动续期，表格会显示续期结果与证书到期时间。</li>
+                                            <li>表格按到期时间排序，15 天内到期会高亮提示。</li>
+                                        </ul>
+                                    </div>
+                                </AccordionContent>
+                            </AccordionItem>
+                        </Accordion>
+
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        value={query}
+                                        onChange={(e) => setQuery(e.target.value)}
+                                        placeholder="搜索域名或邮箱（当前页）…"
+                                        className="pl-9"
+                                    />
                                 </div>
-                            </AccordionContent>
-                        </AccordionItem>
-                    </Accordion>
 
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-                            <div className="relative flex-1">
-                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    value={query}
-                                    onChange={(e) => setQuery(e.target.value)}
-                                    placeholder="搜索域名或邮箱（当前页）…"
-                                    className="pl-9"
-                                />
+                                <Highlight
+                                    controlledItems
+                                    value={renewFilter}
+                                    onValueChange={(v) => setRenewFilter(v as RenewFilter)}
+                                    className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
+                                >
+                                    <div className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground sm:w-auto">
+                                        <HighlightItem
+                                            value="all"
+                                            className="flex-1 sm:flex-none"
+                                        >
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    renewFilter === "all"
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                全部
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem
+                                            value="none"
+                                            className="flex-1 sm:flex-none"
+                                        >
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    renewFilter === "none"
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                未续期
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem
+                                            value="success"
+                                            className="flex-1 sm:flex-none"
+                                        >
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    renewFilter === "success"
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                成功
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem
+                                            value="failed"
+                                            className="flex-1 sm:flex-none"
+                                        >
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    renewFilter === "failed"
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                失败
+                                            </button>
+                                        </HighlightItem>
+                                    </div>
+                                </Highlight>
+
+                                <Highlight
+                                    controlledItems
+                                    value={autoRenewOnly ? "auto" : "all"}
+                                    onValueChange={(v) => setAutoRenewOnly(v === "auto")}
+                                    className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
+                                >
+                                    <div className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground sm:w-auto">
+                                        <HighlightItem value="all" className="flex-1 sm:flex-none">
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    !autoRenewOnly
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                全部策略
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem value="auto" className="flex-1 sm:flex-none">
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    autoRenewOnly
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                自动续期
+                                            </button>
+                                        </HighlightItem>
+                                    </div>
+                                </Highlight>
                             </div>
 
-                            <Highlight
-                                controlledItems
-                                value={renewFilter}
-                                onValueChange={(v) => setRenewFilter(v as RenewFilter)}
-                                className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
-                            >
-                                <div className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground sm:w-auto">
-                                    <HighlightItem
-                                        value="all"
-                                        className="flex-1 sm:flex-none"
-                                    >
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                renewFilter === "all"
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            全部
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem
-                                        value="none"
-                                        className="flex-1 sm:flex-none"
-                                    >
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                renewFilter === "none"
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            未续期
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem
-                                        value="success"
-                                        className="flex-1 sm:flex-none"
-                                    >
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                renewFilter === "success"
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            成功
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem
-                                        value="failed"
-                                        className="flex-1 sm:flex-none"
-                                    >
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                renewFilter === "failed"
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            失败
-                                        </button>
-                                    </HighlightItem>
-                                </div>
-                            </Highlight>
+                            <div className="flex items-center justify-between gap-2 lg:justify-end">
+                                <Highlight
+                                    controlledItems
+                                    value={String(pagination.pageSize)}
+                                    onValueChange={(v) => {
+                                        const next = Number(v);
+                                        setPagination((prev) => ({
+                                            ...prev,
+                                            page: 1,
+                                            pageSize: Number.isFinite(next)
+                                                ? next
+                                                : prev.pageSize,
+                                        }));
+                                    }}
+                                    className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
+                                >
+                                    <div className="inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground">
+                                        <HighlightItem value="10">
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    pagination.pageSize === 10
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                10/页
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem value="20">
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    pagination.pageSize === 20
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                20/页
+                                            </button>
+                                        </HighlightItem>
+                                        <HighlightItem value="50">
+                                            <button
+                                                type="button"
+                                                className={cn(
+                                                    "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                                                    pagination.pageSize === 50
+                                                        ? "text-foreground"
+                                                        : "hover:text-foreground"
+                                                )}
+                                            >
+                                                50/页
+                                            </button>
+                                        </HighlightItem>
+                                    </div>
+                                </Highlight>
 
-                            <Highlight
-                                controlledItems
-                                value={autoRenewOnly ? "auto" : "all"}
-                                onValueChange={(v) => setAutoRenewOnly(v === "auto")}
-                                className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
-                            >
-                                <div className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground sm:w-auto">
-                                    <HighlightItem value="all" className="flex-1 sm:flex-none">
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                !autoRenewOnly
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            全部策略
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem value="auto" className="flex-1 sm:flex-none">
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "w-full rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                autoRenewOnly
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            自动续期
-                                        </button>
-                                    </HighlightItem>
-                                </div>
-                            </Highlight>
+                                {(query || renewFilter !== "all" || autoRenewOnly) && (
+                                    <Button variant="ghost" size="sm" onClick={clearFilters}>
+                                        清除筛选
+                                    </Button>
+                                )}
+                            </div>
                         </div>
+                    </CardHeader>
 
-                        <div className="flex items-center justify-between gap-2 lg:justify-end">
-                            <Highlight
-                                controlledItems
-                                value={String(pagination.pageSize)}
-                                onValueChange={(v) => {
-                                    const next = Number(v);
-                                    setPagination((prev) => ({
-                                        ...prev,
-                                        page: 1,
-                                        pageSize: Number.isFinite(next)
-                                            ? next
-                                            : prev.pageSize,
-                                    }));
-                                }}
-                                className="inset-0 bg-background shadow-sm rounded-md pointer-events-none"
-                            >
-                                <div className="inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground">
-                                    <HighlightItem value="10">
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                pagination.pageSize === 10
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            10/页
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem value="20">
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                pagination.pageSize === 20
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            20/页
-                                        </button>
-                                    </HighlightItem>
-                                    <HighlightItem value="50">
-                                        <button
-                                            type="button"
-                                            className={cn(
-                                                "rounded-md px-3 py-1 text-sm font-medium transition-colors",
-                                                pagination.pageSize === 50
-                                                    ? "text-foreground"
-                                                    : "hover:text-foreground"
-                                            )}
-                                        >
-                                            50/页
-                                        </button>
-                                    </HighlightItem>
-                                </div>
-                            </Highlight>
-
-                            {(query || renewFilter !== "all" || autoRenewOnly) && (
-                                <Button variant="ghost" size="sm" onClick={clearFilters}>
-                                    清除筛选
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                </CardHeader>
-
-                <CardContent>
-                    <TableList
-                        columns={columns}
-                        dataSources={filteredData}
-                        total={pagination.total}
-                        pageSize={pagination.pageSize}
-                        current={pagination.page}
-                        loading={loading}
-                        onPaginationChange={(page: number, pageSize: number) => {
-                            setPagination((prev) => ({
-                                ...prev,
-                                page,
-                                pageSize,
-                            }));
-                        }}
-                    />
-                </CardContent>
-            </Card>
+                    <CardContent>
+                        <TableList
+                            columns={columns}
+                            dataSources={filteredData}
+                            total={pagination.total}
+                            pageSize={pagination.pageSize}
+                            current={pagination.page}
+                            loading={loading}
+                            onPaginationChange={(page: number, pageSize: number) => {
+                                setPagination((prev) => ({
+                                    ...prev,
+                                    page,
+                                    pageSize,
+                                }));
+                            }}
+                        />
+                    </CardContent>
+                </Card>
             </Reveal>
 
             <CreateCertPage

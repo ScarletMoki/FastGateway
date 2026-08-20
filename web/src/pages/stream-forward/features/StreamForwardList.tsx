@@ -23,7 +23,7 @@ import {
 } from "@/services/StreamForwardService";
 import { StreamForward, StreamLoadBalancing, StreamProtocol } from "@/types";
 
-import { Reveal, Stagger, StaggerItem } from "@/components/motion";
+import { Reveal, Stagger, StaggerItem, StatusIndicator, CopyButton, TRANSITION } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -124,31 +124,30 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
     const renderRow = (item: StreamForward) => (
         <div
             className={cn(
-                "group flex flex-col gap-4 p-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-start sm:justify-between",
+                "group flex flex-col gap-4 p-4 transition-all duration-200 hover:bg-muted/30 sm:flex-row sm:items-start sm:justify-between",
                 !item.enable && "opacity-75"
             )}
         >
             <div className="flex min-w-0 flex-1 gap-3">
                 <div
                     className={cn(
-                        "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border",
+                        "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-2xs",
                         item.onLine
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
-                            : "bg-muted text-muted-foreground"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "border-border bg-muted text-muted-foreground"
                     )}
                 >
                     <Network className="h-4 w-4" />
                 </div>
 
-                <div className="min-w-0 flex-1 space-y-3">
+                <div className="min-w-0 flex-1 space-y-2.5">
                     <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="min-w-0 truncate text-base font-semibold">{item.name}</h3>
-                        <Badge
-                            variant={item.onLine ? "default" : "secondary"}
-                            className={cn("h-5 text-xs", item.onLine && "bg-emerald-500 hover:bg-emerald-500/90")}
-                        >
-                            {item.onLine ? "在线" : "离线"}
-                        </Badge>
+                        <h3 className="min-w-0 truncate text-base font-semibold text-foreground group-hover:text-primary transition-colors">{item.name}</h3>
+                        <StatusIndicator
+                            status={item.onLine ? "online" : "offline"}
+                            label={item.onLine ? "转发中" : "已停止"}
+                            size="sm"
+                        />
                         <Badge variant="outline" className="h-5 text-xs font-normal">
                             {item.enable ? "已启用" : "已禁用"}
                         </Badge>
@@ -159,15 +158,20 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                         ) : null}
                     </div>
 
-                    <p className="line-clamp-2 text-sm text-muted-foreground">
-                        {item.description || "暂无描述"}
+                    <p className="line-clamp-2 text-xs text-muted-foreground">
+                        {item.description || "四层端口直通转发通道"}
                     </p>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline" className="h-6 gap-1 font-mono text-xs">
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <Badge variant="outline" className="h-6 gap-1 font-mono text-xs bg-background/60">
                             {protocolLabel(item.protocol)} {item.listenAddress}:{item.listenPort}
                         </Badge>
-                        <Badge variant="outline" className="h-6 text-xs font-normal">
+                        <CopyButton
+                            text={`${item.listenAddress}:${item.listenPort}`}
+                            className="h-6 w-6"
+                            successMessage="已复制监听端口地址"
+                        />
+                        <Badge variant="outline" className="h-6 text-xs font-normal text-muted-foreground">
                             {item.upStreams.length} 上游 · {lbLabel(item.loadBalancing)}
                         </Badge>
                     </div>
@@ -183,15 +187,16 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                         onlineStreamForward(item.id).then(() => load());
                     }}
                     disabled={!item.id}
+                    className="text-xs"
                 >
                     {item.onLine ? (
                         <>
-                            <Square className="mr-2 h-4 w-4" />
+                            <Square className="mr-1.5 h-3.5 w-3.5" />
                             停止
                         </>
                     ) : (
                         <>
-                            <Play className="mr-2 h-4 w-4" />
+                            <Play className="mr-1.5 h-3.5 w-3.5" />
                             启动
                         </>
                     )}
@@ -212,7 +217,7 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                             }}
                         >
                             <Settings className="mr-2 h-4 w-4" />
-                            编辑
+                            编辑配置
                         </DropdownMenuItem>
                         <DropdownMenuItem
                             onClick={() => {
@@ -256,7 +261,7 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
 
     return (
         <Reveal delay={0.08} className="space-y-4">
-            <Card className="border-border/60">
+            <Card className="border-border/60 bg-card/90">
                 <CardHeader className="space-y-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="relative flex-1">
@@ -264,7 +269,7 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                             <Input
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                placeholder="搜索名称、描述或端口…"
+                                placeholder="搜索转发名称、描述或端口…"
                                 className="pl-9"
                             />
                         </div>
@@ -282,10 +287,10 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
 
                 <CardContent className="p-0">
                     {isLoading ? (
-                        <div className="divide-y">
+                        <div className="divide-y divide-border/50">
                             {Array.from({ length: 4 }).map((_, index) => (
                                 <div key={index} className="flex gap-4 p-4">
-                                    <Skeleton className="h-9 w-9 rounded-lg" />
+                                    <Skeleton className="h-10 w-10 rounded-xl" />
                                     <div className="flex-1 space-y-3">
                                         <Skeleton className="h-4 w-40" />
                                         <Skeleton className="h-4 w-full max-w-xl" />
@@ -312,9 +317,15 @@ const StreamForwardList = memo(({ reloadFlag }: StreamForwardListProps) => {
                             <h3 className="text-lg font-semibold">没有匹配的规则</h3>
                         </div>
                     ) : (
-                        <Stagger className="divide-y">
+                        <Stagger className="divide-y divide-border/50">
                             {filtered.map((item) => (
-                                <StaggerItem key={item.id ?? item.name}>{renderRow(item)}</StaggerItem>
+                                <StaggerItem
+                                    key={item.id ?? item.name}
+                                    layout
+                                    transition={TRANSITION.layout}
+                                >
+                                    {renderRow(item)}
+                                </StaggerItem>
                             ))}
                         </Stagger>
                     )}

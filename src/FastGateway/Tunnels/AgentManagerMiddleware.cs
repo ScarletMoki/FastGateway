@@ -1,21 +1,17 @@
-﻿namespace FastGateway.Tunnels;
+﻿using Core.Entities;
+
+namespace FastGateway.Tunnels;
 
 /// <summary>
 ///     节点服务中间件
 ///     用于与节点服务建立主连接、创建隧道和管理隧道连接、保持ping服务。
 /// </summary>
-/// <param name="agentTunnelFactory"></param>
-/// <param name="logger"></param>
-/// <param name="agentClientManager"></param>
-internal class AgentManagerMiddleware(
+internal partial class AgentManagerMiddleware(
     AgentTunnelFactory agentTunnelFactory,
     ILogger<AgentManagerMiddleware> logger,
-    TunnelClientProxy tunnelClientProxy,
-    IConfiguration configuration,
+    Server server,
     AgentClientManager agentClientManager) : IMiddleware
 {
-    private readonly string TunnelToken = configuration["TunnelToken"] ?? "Aa123456.";
-
     /// <summary>
     ///     HTTP请求中间件的入口方法
     /// </summary>
@@ -34,55 +30,61 @@ internal class AgentManagerMiddleware(
             return;
         }
 
-        // 从请求中获取节点ID
+        // 从请求中获取节点名（query 兼容旧客户端，header 供 WebSocket 使用）
         var nodeName = context.Request.Query["nodeName"].ToString();
+        if (string.IsNullOrEmpty(nodeName))
+            nodeName = context.Request.Headers["nodeName"].ToString();
 
-        // 如果节点ID为空，调用下一个中间件
+        // 如果节点名为空，调用下一个中间件（数据隧道回连走 tunnelId）
         if (string.IsNullOrEmpty(nodeName))
         {
             await next(context);
             return;
         }
 
-        var token = context.Request.Query["token"].ToString();
-        if (string.IsNullOrEmpty(token))
+        // 节点级密钥认证（优先 Authorization 头，query 仅兼容保留）
+        var credential = TunnelNodeStore.ExtractCredential(context);
+        var auth = TunnelNodeStore.Authenticate(nodeName, credential);
+        if (!auth.Success)
         {
-            await Task.Delay(5000);
-
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            // 延迟响应降低暴力枚举效率
+            await Task.Delay(3000);
+            context.Response.StatusCode = auth.StatusCode;
             return;
         }
 
-
-        if (TunnelToken != token)
+        // 心跳间隔采用客户端上报值（注册时持久化），钳制在合理范围
+        var heartbeatSeconds = TunnelNodeStore.ClampHeartbeatSeconds(auth.Node!.HeartbeatInterval);
+        var connectionConfig = new ConnectionConfig
         {
-            await Task.Delay(5000);
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return;
-        }
+            KeepAliveInterval = TimeSpan.FromSeconds(heartbeatSeconds)
+        };
 
         // 构建应用程序主机名
         var host = "node_" + nodeName;
 
+        AgentClient? client = null;
         try
         {
             // 创建连接
             var stream = await feature.AcceptAsSafeWriteStreamAsync();
 
             // 创建客户端连接
-            var connection = new AgentClientConnection(host, stream, new ConnectionConfig(), logger);
-
-            var disconnected = false;
+            var connection = new AgentClientConnection(host, stream, connectionConfig, logger);
 
             // 使用连接创建客户端对象，并添加到客户端管理器
-            await using var client = new AgentClient(connection, agentTunnelFactory, context);
+            client = new AgentClient(connection, agentTunnelFactory, context);
+            await using var _ = client;
             if (await agentClientManager.AddAsync(client, default))
             {
+                Log.LogNodeConnected(logger, nodeName, heartbeatSeconds);
+                TunnelClientProxy.OnConnected(nodeName, client, server);
+
                 // 等待连接关闭
                 await connection.WaitForCloseAsync();
 
                 // 从客户管理器中移除客户端对象
-                disconnected = await agentClientManager.RemoveAsync(client, default);
+                await agentClientManager.RemoveAsync(client, default);
             }
         }
         catch (Exception e)
@@ -92,9 +94,12 @@ internal class AgentManagerMiddleware(
         }
         finally
         {
-            // NodesServiceRegistrationService.ClientList.TryRemove(nodeId, out _);
-            // await NodesServiceRegistrationService.UnregisterClient(host);
-            await tunnelClientProxy.RemoveClientAsync(nodeName);
+            if (client != null)
+            {
+                // 更新离线状态与最近连接时间，并清理该节点的 YARP 路由
+                TunnelClientProxy.OnDisconnected(nodeName, client);
+                Log.LogNodeDisconnected(logger, nodeName);
+            }
         }
     }
 
@@ -105,5 +110,14 @@ internal class AgentManagerMiddleware(
     {
         return protocol is TransportProtocol.Http11 or TransportProtocol.Http2 or TransportProtocol.WebSocketWithHttp11
             or TransportProtocol.WebSocketWithHttp2;
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(LogLevel.Information, "节点 [{nodeName}] 控制连接已建立，心跳间隔 {heartbeatSeconds}s")]
+        public static partial void LogNodeConnected(ILogger logger, string nodeName, int heartbeatSeconds);
+
+        [LoggerMessage(LogLevel.Information, "节点 [{nodeName}] 控制连接已断开，路由已清理")]
+        public static partial void LogNodeDisconnected(ILogger logger, string nodeName);
     }
 }

@@ -43,10 +43,27 @@ public sealed partial class AgentClientConnection : IAsyncDisposable
     {
         if (!_disposeTokenSource.IsCancellationRequested)
         {
-            _disposeTokenSource.Cancel();
+            // 取消回调会关闭底层 WebSocket/HttpContext；若对端已先断开，这些对象可能已释放，
+            // Cancel 会把 ObjectDisposedException 从回调透传出来，这里吞掉保证清理幂等
+            try
+            {
+                _disposeTokenSource.Cancel();
+            }
+            catch
+            {
+                // ignored
+            }
+
             _disposeTokenSource.Dispose();
 
-            await _stream.DisposeAsync();
+            try
+            {
+                await _stream.DisposeAsync();
+            }
+            catch
+            {
+                // ignored
+            }
         }
     }
 

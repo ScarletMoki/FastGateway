@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Reveal } from '@/components/motion';
+import { Reveal, StatusIndicator, CopyButton } from '@/components/motion';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,6 @@ import {
 } from '@/services/ClusterService';
 import {
     Boxes,
-    Copy,
     Crown,
     Link2,
     LogOut,
@@ -39,7 +38,7 @@ import {
     Unplug,
 } from 'lucide-react';
 
-const formatTime = (value?: string) => (value ? new Date(value).toLocaleString() : '-');
+const formatTime = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN') : '-');
 
 const errMsg = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -88,15 +87,6 @@ const ClusterPage = () => {
             message.error(`生成接入码失败: ${errMsg(error)}`);
         } finally {
             setGenerating(false);
-        }
-    };
-
-    const handleCopy = async (text: string, tips: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            message.success(tips);
-        } catch {
-            message.error('复制失败，请手动复制');
         }
     };
 
@@ -161,11 +151,11 @@ const ClusterPage = () => {
         if (!state) return null;
         switch (state.role) {
             case ClusterRole.Master:
-                return <Badge className="bg-amber-500 text-amber-50">主网关</Badge>;
+                return <Badge className="bg-amber-500 text-amber-50">主网关 (Master)</Badge>;
             case ClusterRole.Worker:
-                return <Badge className="bg-sky-500 text-sky-50">从节点</Badge>;
+                return <Badge className="bg-sky-500 text-sky-50">从节点 (Worker)</Badge>;
             default:
-                return <Badge variant="secondary">独立运行</Badge>;
+                return <Badge variant="secondary">独立节点 (Standalone)</Badge>;
         }
     };
 
@@ -177,17 +167,18 @@ const ClusterPage = () => {
                         <h1 className="text-2xl font-semibold text-foreground">集群管理</h1>
                         {roleBadge()}
                     </div>
-                    <p className="text-muted-foreground mt-1">
+                    <p className="text-muted-foreground mt-1 text-sm">
                         多节点分布式网关：主网关统一管理配置，从节点自动同步并本地转发
                     </p>
                 </div>
                 <Button
                     onClick={() => loadState()}
                     disabled={loading}
-                    className="flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+                    variant="outline"
+                    className="flex items-center gap-2"
                 >
                     <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    刷新
+                    刷新状态
                 </Button>
             </Reveal>
 
@@ -198,43 +189,45 @@ const ClusterPage = () => {
             ) : state.role === ClusterRole.Worker ? (
                 /* ===== 从节点视图 ===== */
                 <Reveal>
-                    <Card className="max-w-2xl">
+                    <Card className="max-w-2xl border-border/70 bg-card/90">
                         <CardHeader>
                             <div className="flex items-center justify-between">
                                 <CardTitle className="flex items-center gap-2">
-                                    <Boxes className="h-5 w-5" />
+                                    <Boxes className="h-5 w-5 text-sky-500" />
                                     已加入集群
                                 </CardTitle>
-                                <Badge
-                                    variant={state.connected ? 'default' : 'secondary'}
-                                    className={state.connected ? 'bg-green-500 text-green-50' : 'bg-muted text-muted-foreground'}
-                                >
-                                    {state.connected ? '同步通道在线' : '连接中...'}
-                                </Badge>
+                                <StatusIndicator
+                                    status={state.connected ? "online" : "busy"}
+                                    label={state.connected ? "同步通道在线" : "连接同步中..."}
+                                    size="sm"
+                                />
                             </div>
                             <CardDescription>
                                 本网关的配置由主网关统一下发，本地修改会在下次同步时被覆盖
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div className="grid grid-cols-2 gap-4 text-sm rounded-lg border border-border/50 bg-muted/20 p-3.5">
                                 <div>
-                                    <p className="text-muted-foreground">节点名称</p>
-                                    <p className="font-medium text-foreground">{state.nodeName || '-'}</p>
+                                    <p className="text-xs text-muted-foreground">节点名称</p>
+                                    <p className="font-medium text-foreground mt-0.5">{state.nodeName || '-'}</p>
                                 </div>
                                 <div>
-                                    <p className="text-muted-foreground">主网关地址</p>
-                                    <p className="font-mono text-xs bg-muted px-2 py-1 rounded inline-block text-foreground">
-                                        {state.masterEndpoint}
-                                    </p>
+                                    <p className="text-xs text-muted-foreground">主网关地址</p>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                        <code className="font-mono text-xs bg-background border px-2 py-0.5 rounded text-foreground">
+                                            {state.masterEndpoint}
+                                        </code>
+                                        <CopyButton text={state.masterEndpoint || ''} className="h-6 w-6" />
+                                    </div>
                                 </div>
                                 <div>
-                                    <p className="text-muted-foreground">已同步配置版本</p>
-                                    <p className="font-medium text-foreground">{state.syncedVersion || '-'}</p>
+                                    <p className="text-xs text-muted-foreground">已同步配置版本</p>
+                                    <p className="font-medium text-foreground mt-0.5">{state.syncedVersion || '-'}</p>
                                 </div>
                                 <div>
-                                    <p className="text-muted-foreground">最近同步时间</p>
-                                    <p className="font-medium text-foreground">{formatTime(state.lastSyncTime)}</p>
+                                    <p className="text-xs text-muted-foreground">最近同步时间</p>
+                                    <p className="font-medium text-foreground mt-0.5">{formatTime(state.lastSyncTime)}</p>
                                 </div>
                             </div>
                             <Separator />
@@ -253,7 +246,7 @@ const ClusterPage = () => {
                     {/* ===== 主网关 / 独立：生成接入码 ===== */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <Reveal>
-                            <Card className="h-full">
+                            <Card className="h-full border-border/70 bg-card/90">
                                 <CardHeader>
                                     <CardTitle className="flex items-center gap-2">
                                         <Crown className="h-5 w-5 text-amber-500" />
@@ -283,39 +276,32 @@ const ClusterPage = () => {
                                     </Button>
 
                                     {inviteCode && (
-                                        <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+                                        <div className="space-y-2 rounded-lg border border-border/70 bg-muted/40 p-3">
                                             <div className="flex items-center justify-between">
                                                 <span className="text-sm font-medium text-foreground">接入码</span>
                                                 <span className="text-xs text-muted-foreground">
                                                     有效期至 {formatTime(inviteExpiresAt)}
                                                 </span>
                                             </div>
-                                            <p className="font-mono text-xs break-all bg-background border border-border rounded p-2 text-foreground">
-                                                {inviteCode}
-                                            </p>
-                                            <div className="flex gap-2">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    onClick={() => handleCopy(inviteCode, '接入码已复制')}
-                                                    className="flex items-center gap-1"
-                                                >
-                                                    <Copy className="h-3.5 w-3.5" />
-                                                    复制接入码
-                                                </Button>
+                                            <div className="flex items-start gap-2">
+                                                <p className="font-mono text-xs break-all bg-background border border-border rounded p-2 flex-1 text-foreground">
+                                                    {inviteCode}
+                                                </p>
+                                                <CopyButton text={inviteCode} variant="outline" size="sm" successMessage="接入码已复制" />
+                                            </div>
+                                            <div className="flex gap-2 pt-1">
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
                                                     onClick={() =>
-                                                        handleCopy(`/cluster?code=${inviteCode}`, '链接后缀已复制，拼接到从网关地址后打开即可')
+                                                        navigator.clipboard.writeText(`/cluster?code=${inviteCode}`).then(() => message.success('链接后缀已复制'))
                                                     }
-                                                    className="flex items-center gap-1"
+                                                    className="text-xs"
                                                 >
-                                                    <Copy className="h-3.5 w-3.5" />
                                                     复制一键加入链接后缀
                                                 </Button>
                                             </div>
-                                            <p className="text-xs text-muted-foreground">
+                                            <p className="text-[11px] text-muted-foreground">
                                                 在从网关地址后拼接该后缀打开（如 http://gw-b:8080/cluster?code=...），接入码会自动填入
                                             </p>
                                         </div>
@@ -326,8 +312,8 @@ const ClusterPage = () => {
 
                         {/* ===== 独立：加入其它集群 ===== */}
                         {state.role === ClusterRole.Standalone && (
-                            <Reveal>
-                                <Card className="h-full">
+                            <Reveal delay={0.06}>
+                                <Card className="h-full border-border/70 bg-card/90">
                                     <CardHeader>
                                         <CardTitle className="flex items-center gap-2">
                                             <Unplug className="h-5 w-5 text-sky-500" />
@@ -371,20 +357,20 @@ const ClusterPage = () => {
 
                     {/* ===== 主网关：节点列表 ===== */}
                     {state.role === ClusterRole.Master && (
-                        <Reveal>
-                            <Card>
+                        <Reveal delay={0.1}>
+                            <Card className="border-border/70 bg-card/90">
                                 <CardHeader>
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
                                         <div>
                                             <CardTitle>从节点列表</CardTitle>
                                             <CardDescription>配置变更后自动推送到所有在线节点</CardDescription>
                                         </div>
                                         <div className="flex gap-2">
-                                            <Button variant="outline" onClick={handlePush} className="flex items-center gap-2">
+                                            <Button variant="outline" size="sm" onClick={handlePush} className="flex items-center gap-2">
                                                 <Send className="h-4 w-4" />
                                                 立即推送配置
                                             </Button>
-                                            <Button variant="destructive" onClick={handleDissolve} className="flex items-center gap-2">
+                                            <Button variant="destructive" size="sm" onClick={handleDissolve} className="flex items-center gap-2">
                                                 <Trash2 className="h-4 w-4" />
                                                 解散集群
                                             </Button>
@@ -395,7 +381,7 @@ const ClusterPage = () => {
                                     {state.nodes.length === 0 ? (
                                         <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                                             <Boxes className="h-8 w-8 mb-2 opacity-50" />
-                                            <p>暂无从节点，生成接入码后在其它网关加入</p>
+                                            <p className="text-sm">暂无从节点，生成接入码后在其它网关加入</p>
                                         </div>
                                     ) : (
                                         <Table>
@@ -414,20 +400,15 @@ const ClusterPage = () => {
                                                     <TableRow key={node.id}>
                                                         <TableCell className="font-medium">{node.name}</TableCell>
                                                         <TableCell>
-                                                            <Badge
-                                                                variant={node.online ? 'default' : 'secondary'}
-                                                                className={
-                                                                    node.online
-                                                                        ? 'bg-green-500 text-green-50'
-                                                                        : 'bg-muted text-muted-foreground'
-                                                                }
-                                                            >
-                                                                {node.online ? '在线' : '离线'}
-                                                            </Badge>
+                                                            <StatusIndicator
+                                                                status={node.online ? "online" : "offline"}
+                                                                label={node.online ? "在线" : "离线"}
+                                                                size="sm"
+                                                            />
                                                         </TableCell>
-                                                        <TableCell>{node.online ? node.syncedVersion : '-'}</TableCell>
-                                                        <TableCell>{node.online ? formatTime(node.lastSeen) : '-'}</TableCell>
-                                                        <TableCell>{formatTime(node.registeredAt)}</TableCell>
+                                                        <TableCell className="font-mono text-xs">{node.online ? node.syncedVersion : '-'}</TableCell>
+                                                        <TableCell className="text-xs text-muted-foreground">{node.online ? formatTime(node.lastSeen) : '-'}</TableCell>
+                                                        <TableCell className="text-xs text-muted-foreground">{formatTime(node.registeredAt)}</TableCell>
                                                         <TableCell className="text-right">
                                                             <Button
                                                                 variant="ghost"

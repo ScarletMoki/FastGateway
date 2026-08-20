@@ -13,8 +13,5 @@ public static class ServiceExtensions
         services.AddSingleton<AgentStateChannel>();
         services.AddSingleton<AgentManagerMiddleware>();
         services.AddSingleton<AgentManagerTunnelMiddleware>();
-        services.AddSingleton<TunnelClientProxy>();
-
-        services.AddSingleton<IForwarderHttpClientFactory>(s => s.GetRequiredService<TunnelClientFactory>());
     }
 }
