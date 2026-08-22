@@ -2,7 +2,6 @@ using Core.Entities;
 using Core.Entities.Core;
 using FastGateway.Dto;
 using FastGateway.Infrastructure;
-using FastGateway.Options;
 using FastGateway.Services;
 using Microsoft.AspNetCore.Http;
 using System.Collections.Concurrent;
@@ -316,8 +315,7 @@ public sealed class ClusterRequestFailoverMiddleware
                 ConnectTimeout = TimeSpan.FromMilliseconds(timeout),
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-                ResponseDrainTimeout = TimeSpan.FromSeconds(5),
-                MaxConnectionsPerServer = FastGatewayOptions.MaxConnectionsPerUpstream
+                ResponseDrainTimeout = TimeSpan.FromSeconds(5)
             };
 
             return new HttpMessageInvoker(handler, disposeHandler: true);

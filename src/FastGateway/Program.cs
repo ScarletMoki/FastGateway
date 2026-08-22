@@ -18,8 +18,8 @@ public static class Program
     {
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
-        // 仅隧道 / 已知 h2c 对端需要明文 HTTP/2。普通 http:// 上游由 ForwarderRequestConfig
-        // 钉在 HTTP/1.1，避免对不支持 h2c 的服务做 prior-knowledge 探测、套接字翻倍。
+        // 仅隧道路径使用明文 HTTP/2（h2c）。默认出站客户端（含 HTTPS 上游）已由
+        // ForwarderRequestConfig 一律钉在 HTTP/1.1，此开关只对请求 Version=2.0 的隧道 cluster 生效。
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions

@@ -1,4 +1,3 @@
-using FastGateway.Options;
 using FastGateway.Tunnels;
 using System.Diagnostics;
 using System.Net;
@@ -29,17 +28,14 @@ internal sealed class FastGatewayForwarderHttpClientFactory(
 }
 
 /// <summary>
-///     普通上游共用一份进程级 <see cref="SocketsHttpHandler"/>。
-///     YARP 默认每个 cluster 各建一个 handler；多条路由指向同一主机时，
-///     <c>MaxConnectionsPerServer</c> 会按 cluster 相乘。共享后上限才是「每上游」。
-///     上限必须有界：HTTP/1.1 上游一请求一连接，不设限时高并发会耗尽 fd（ENFILE），
-///     达到上限后请求在池内排队，优于把整机文件表打爆。
+///     普通上游共用一份进程级 <see cref="SocketsHttpHandler"/>，避免 YARP 默认
+///     每个 cluster 各建一个 handler、连接池按 cluster 数相乘。
+///     默认客户端一律 HTTP/1.1（版本由 ForwarderRequestConfig 钉死，HTTP/2 仅隧道路径使用），
+///     且不设 MaxConnectionsPerServer 上限：高峰期上限会把多余请求压进池内排队，
+///     排队请求持续占用入站连接，反而加速 fd 堆积；出站规模交由系统 nofile 约束。
 /// </summary>
 public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFactory
 {
-    internal static int MaxConnectionsPerServer => FastGatewayOptions.MaxConnectionsPerUpstream;
-
-    // Lazy：确保首个网关请求到来时 FastGatewayOptions.Initialize 已执行完毕
     private static readonly Lazy<SocketsHttpHandler> SharedHandler =
         new(CreateSharedHandler, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -62,12 +58,7 @@ public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFac
             ConnectTimeout = TimeSpan.FromSeconds(10),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-            ResponseDrainTimeout = TimeSpan.FromSeconds(5),
-            // 只对真正的 HTTP/2（HTTPS ALPN）生效：单连接默认约 100 路并发流，
-            // 打满后另开连接。明文 http:// 已钉 HTTP/1.1，不受此开关影响。
-            EnableMultipleHttp2Connections = true,
-            EnableMultipleHttp3Connections = false,
-            MaxConnectionsPerServer = FastGatewayOptions.MaxConnectionsPerUpstream
+            ResponseDrainTimeout = TimeSpan.FromSeconds(5)
         };
     }
 }

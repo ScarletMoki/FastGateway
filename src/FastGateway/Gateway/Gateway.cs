@@ -823,43 +823,23 @@ public static class Gateway
         return false;
     }
 
-    private static HttpClientConfig CreateHttpClientConfig(bool enableMultipleHttp2Connections)
-    {
-        return new HttpClientConfig
-        {
-            MaxConnectionsPerServer = StandardForwarderHttpClientFactory.MaxConnectionsPerServer,
-            EnableMultipleHttp2Connections = enableMultipleHttp2Connections
-        };
-    }
-
-    private static ForwarderRequestConfig CreateHttpRequestConfig(Server server, bool preferHttp2)
+    private static ForwarderRequestConfig CreateHttpRequestConfig(Server server, bool isTunnel)
     {
         var timeoutSeconds = server.Timeout > 0 ? server.Timeout : 900;
         if (timeoutSeconds < 600) timeoutSeconds = 600;
 
-        // YARP 默认 Version=2.0。配合 Http2UnencryptedSupport 时，明文上游会先发 h2c
-        // prior-knowledge；对方若只讲 HTTP/1.1，每次建连失败再回退，套接字在 TIME_WAIT
-        // 里堆积，最终 ENFILE（Too many open files in system）。
+        // 默认出站客户端一律 HTTP/1.1（含 HTTPS 上游，ALPN 只出 http/1.1）：
+        // YARP 默认 Version=2.0，明文上游配合 Http2UnencryptedSupport 会先发 h2c
+        // prior-knowledge，失败再回退，建连翻倍最终 ENFILE。仅隧道对端按 h2c 设计。
         return new ForwarderRequestConfig
         {
             ActivityTimeout = TimeSpan.FromSeconds(timeoutSeconds),
             AllowResponseBuffering = false,
-            Version = preferHttp2 ? HttpVersion.Version20 : HttpVersion.Version11,
-            VersionPolicy = preferHttp2
+            Version = isTunnel ? HttpVersion.Version20 : HttpVersion.Version11,
+            VersionPolicy = isTunnel
                 ? HttpVersionPolicy.RequestVersionOrLower
                 : HttpVersionPolicy.RequestVersionExact
         };
-    }
-
-    /// <summary>
-    ///     HTTPS 走 ALPN 协商 HTTP/2；隧道对端按 h2c 设计。普通 http:// 上游固定 HTTP/1.1，
-    ///     避免对不支持 h2c 的服务（如 meteor-api）做 prior-knowledge 探测。
-    /// </summary>
-    private static bool PreferHttp2(string? address)
-    {
-        if (string.IsNullOrWhiteSpace(address)) return false;
-        return address.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-               || IsTunnelService(address);
     }
 
     private static Dictionary<string, string> CreateClusterMetadata(string? service)
@@ -974,8 +954,7 @@ public static class Gateway
                         { "relay", new DestinationConfig { Address = relayAddress } }
                     },
                     // 主动健康检查探测的是中继链路而非真实上游，对中继目的地不启用
-                    HttpClient = CreateHttpClientConfig(enableMultipleHttp2Connections: PreferHttp2(relayAddress)),
-                    HttpRequest = CreateHttpRequestConfig(server, PreferHttp2(relayAddress)),
+                    HttpRequest = CreateHttpRequestConfig(server, IsTunnelService(relayAddress)),
                     Metadata = CreateRelayClusterMetadata(relayAddress, domainName.AccessNodeId!)
                 });
 
@@ -1049,8 +1028,7 @@ public static class Gateway
                         }
                     },
                     HealthCheck = CreateHealthCheckConfig(domainName),
-                    HttpClient = CreateHttpClientConfig(enableMultipleHttp2Connections: PreferHttp2(domainName.Service)),
-                    HttpRequest = CreateHttpRequestConfig(server, PreferHttp2(domainName.Service)),
+                    HttpRequest = CreateHttpRequestConfig(server, IsTunnelService(domainName.Service)),
                     Metadata = CreateClusterMetadata(domainName.Service)
                 };
 
@@ -1078,12 +1056,9 @@ public static class Gateway
                     Destinations = destinations,
                     LoadBalancingPolicy = LoadBalancingPolicies.LeastRequests,
                     HealthCheck = CreateHealthCheckConfig(domainName),
-                    HttpClient = CreateHttpClientConfig(
-                        enableMultipleHttp2Connections: domainName.UpStreams.Count > 0
-                            && domainName.UpStreams.TrueForAll(u => PreferHttp2(u.Service))),
                     HttpRequest = CreateHttpRequestConfig(server,
                         domainName.UpStreams.Count > 0
-                        && domainName.UpStreams.TrueForAll(u => PreferHttp2(u.Service))),
+                        && domainName.UpStreams.TrueForAll(u => IsTunnelService(u.Service))),
                     Metadata = CreateClusterMetadata(null)
                 };
 
