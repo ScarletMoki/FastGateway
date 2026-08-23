@@ -195,9 +195,9 @@ public static class Gateway
                             Address = kvp.Value.Model.Config.Address,
                             Health = new DestinationHealthStateDto
                             {
-                                Active = kvp.Value.Health.Active,
-                                Passive = kvp.Value.Health.Passive,
-                                Effective = GetEffectiveHealth(kvp.Value.Health)
+                                Active = FormatDestinationHealth(kvp.Value.Health.Active),
+                                Passive = FormatDestinationHealth(kvp.Value.Health.Passive),
+                                Effective = FormatDestinationHealth(GetEffectiveHealth(kvp.Value.Health))
                             }
                         })
                         .ToArray()
@@ -214,17 +214,31 @@ public static class Gateway
         };
     }
 
+    /// <summary>
+    ///     展示用综合健康：任一维度 Unhealthy 即摘除；探测或代理曾判定 Healthy 则视为健康。
+    ///     被动检查在无失败时保持 Unknown，不能因此把已探测成功的节点显示成未知。
+    /// </summary>
     private static DestinationHealth GetEffectiveHealth(DestinationHealthState healthState)
     {
         if (healthState.Active == DestinationHealth.Unhealthy ||
             healthState.Passive == DestinationHealth.Unhealthy)
             return DestinationHealth.Unhealthy;
 
-        if (healthState.Active == DestinationHealth.Unknown ||
-            healthState.Passive == DestinationHealth.Unknown)
-            return DestinationHealth.Unknown;
+        if (healthState.Active == DestinationHealth.Healthy ||
+            healthState.Passive == DestinationHealth.Healthy)
+            return DestinationHealth.Healthy;
 
-        return DestinationHealth.Healthy;
+        return DestinationHealth.Unknown;
+    }
+
+    private static string FormatDestinationHealth(DestinationHealth health)
+    {
+        return health switch
+        {
+            DestinationHealth.Healthy => "Healthy",
+            DestinationHealth.Unhealthy => "Unhealthy",
+            _ => "Unknown"
+        };
     }
 
     /// <summary>

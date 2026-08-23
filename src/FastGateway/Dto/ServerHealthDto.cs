@@ -1,5 +1,3 @@
-using Yarp.ReverseProxy.Model;
-
 namespace FastGateway.Dto;
 
 /// <summary>
@@ -44,11 +42,15 @@ public sealed class DestinationHealthDto
     public DestinationHealthStateDto Health { get; set; } = new();
 }
 
+/// <summary>
+///     节点健康。Active 为周期性探测，Passive 为实际转发失败率。
+///     取值：Unknown / Healthy / Unhealthy（字符串，避免 AOT 下枚举序列化为数字）。
+/// </summary>
 public sealed class DestinationHealthStateDto
 {
-    public DestinationHealth Active { get; set; }
+    public string Active { get; set; } = "Unknown";
 
-    public DestinationHealth Passive { get; set; }
+    public string Passive { get; set; } = "Unknown";
 
-    public DestinationHealth Effective { get; set; }
+    public string Effective { get; set; } = "Unknown";
 }

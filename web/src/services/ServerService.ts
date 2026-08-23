@@ -29,3 +29,7 @@ export const onlineServer = async (id:any) => {
 export const reloadServer = async (id:any) => {
   return put(`${baseUrl}/${id}/reload`);
 }
+
+export const getServerHealth = async (id: string) => {
+  return get(`${baseUrl}/${id}/health`);
+}

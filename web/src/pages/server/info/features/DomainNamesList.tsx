@@ -1,10 +1,11 @@
-import { DomainName, ServiceType } from "@/types";
+import { ClusterHealth, DomainName, ServerHealthSnapshot, ServiceType } from "@/types";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useDomainStore } from "@/store/server";
 import {
     AlertTriangle,
     Edit3,
     FileText,
+    HeartPulse,
     HelpCircle,
     Layers,
     ListChecks,
@@ -17,6 +18,13 @@ import {
     Trash2,
     X,
 } from "lucide-react";
+import UpstreamNodeStatus, { ClusterHealthSummary } from "./UpstreamNodeStatus";
+import {
+    computeEffectiveHealth,
+    getClusterHealthMap,
+    parseDestinationHealth,
+    takeDestination,
+} from "../health";
 import { useParams } from "react-router-dom";
 import { deleteDomain, enableService, getDomains } from "@/services/DomainNameService";
 import UpdateDomain from "./UpdateDomain";
@@ -36,10 +44,78 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-const DomainNamesList = memo(() => {
+interface DomainNamesListProps {
+    health?: ServerHealthSnapshot | null;
+    healthLoading?: boolean;
+}
+
+function ClusterNodesBlock({
+    item,
+    cluster,
+    gatewayOnline,
+    healthLoading,
+    hasHealth,
+}: {
+    item: DomainName;
+    cluster: ClusterHealth | undefined;
+    gatewayOnline: boolean;
+    healthLoading: boolean;
+    hasHealth: boolean;
+}) {
+    const used = new Set<string>();
+    const nodes = (item.upStreams ?? []).map((upstream) => {
+        const destination = takeDestination(cluster, upstream.service, used);
+        const probe = parseDestinationHealth(destination?.health?.active);
+        const proxy = parseDestinationHealth(destination?.health?.passive);
+        return {
+            service: upstream.service,
+            destination,
+            effective: computeEffectiveHealth(probe, proxy),
+        };
+    });
+    const healthCheckEnabled =
+        item.enableHealthCheck || Boolean(cluster?.healthCheck?.enabled);
+    const healthy = nodes.filter((node) => node.effective === "Healthy").length;
+    const unhealthy = nodes.filter((node) => node.effective === "Unhealthy").length;
+    const unknown = nodes.length - healthy - unhealthy;
+
+    return (
+        <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                    集群节点 ({nodes.length})
+                </div>
+                <ClusterHealthSummary
+                    total={nodes.length}
+                    healthy={healthy}
+                    unhealthy={unhealthy}
+                    unknown={unknown}
+                    healthCheckEnabled={healthCheckEnabled}
+                    healthCheckPath={cluster?.healthCheck?.path ?? item.healthCheckPath}
+                    gatewayOnline={gatewayOnline}
+                />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+                {nodes.map((node, index) => (
+                    <UpstreamNodeStatus
+                        key={`${node.service}-${index}`}
+                        address={node.service}
+                        destination={node.destination}
+                        healthCheckEnabled={healthCheckEnabled}
+                        gatewayOnline={gatewayOnline}
+                        loading={healthLoading && !hasHealth}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+const DomainNamesList = memo(({ health = null, healthLoading = false }: DomainNamesListProps) => {
     const [updateVisible, setUpdateVisible] = useState(false);
     const [updateDomain, setUpdateDomain] = useState<DomainName | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +134,8 @@ const DomainNamesList = memo(() => {
     const { id } = useParams<{ id: string }>();
     const { domains: storeDomains, setDomains, loadingDomains } = useDomainStore();
     const domains = storeDomains as DomainName[];
+    const clusterById = useMemo(() => getClusterHealthMap(health), [health]);
+    const gatewayOnline = health?.online !== false;
 
     const loadDomainName = useCallback(() => {
         if (!id) {
@@ -319,6 +397,15 @@ const DomainNamesList = memo(() => {
                         >
                             {item.enable ? "运行中" : "已禁用"}
                         </Badge>
+                        {item.enableHealthCheck ? (
+                            <Badge
+                                variant="outline"
+                                className="h-5 gap-1 px-1.5 text-[10px] font-normal"
+                            >
+                                <HeartPulse className="h-3 w-3" />
+                                健康检查
+                            </Badge>
+                        ) : null}
                         <h3 className="min-w-0 flex-1 truncate font-mono text-base font-semibold text-foreground">
                             {item.path}
                         </h3>
@@ -330,9 +417,30 @@ const DomainNamesList = memo(() => {
                                 <span className="shrink-0 text-xs text-muted-foreground">
                                     代理:
                                 </span>
-                                <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">
-                                    {item.service || "-"}
-                                </code>
+                                {item.service ? (
+                                    <UpstreamNodeStatus
+                                        address={item.service}
+                                        destination={takeDestination(
+                                            item.id ? clusterById.get(item.id) : undefined,
+                                            item.service,
+                                            new Set()
+                                        )}
+                                        healthCheckEnabled={
+                                            item.enableHealthCheck ||
+                                            Boolean(
+                                                item.id &&
+                                                    clusterById.get(item.id)?.healthCheck
+                                                        ?.enabled
+                                            )
+                                        }
+                                        gatewayOnline={gatewayOnline}
+                                        loading={healthLoading && !health}
+                                    />
+                                ) : (
+                                    <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">
+                                        -
+                                    </code>
+                                )}
                             </div>
                         ) : null}
 
@@ -348,23 +456,13 @@ const DomainNamesList = memo(() => {
                         ) : null}
 
                         {item.serviceType === ServiceType.ServiceCluster ? (
-                            <div className="space-y-2">
-                                <div className="text-xs text-muted-foreground">
-                                    集群节点 ({item.upStreams?.length ?? 0})
-                                </div>
-                                <div className="flex flex-wrap gap-1">
-                                    {(item.upStreams ?? []).slice(0, 4).map((x, i) => (
-                                        <Badge key={i} variant="outline" className="text-xs">
-                                            {x.service}
-                                        </Badge>
-                                    ))}
-                                    {(item.upStreams?.length ?? 0) > 4 ? (
-                                        <Badge variant="secondary" className="text-xs">
-                                            +{(item.upStreams?.length ?? 0) - 4}
-                                        </Badge>
-                                    ) : null}
-                                </div>
-                            </div>
+                            <ClusterNodesBlock
+                                item={item}
+                                cluster={item.id ? clusterById.get(item.id) : undefined}
+                                gatewayOnline={gatewayOnline}
+                                healthLoading={healthLoading}
+                                hasHealth={Boolean(health)}
+                            />
                         ) : null}
 
                         <div className="flex flex-wrap items-start justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2">
@@ -472,6 +570,7 @@ const DomainNamesList = memo(() => {
     };
 
     return (
+        <TooltipProvider delayDuration={200}>
         <Reveal delay={0.08} className="space-y-4">
             <Card className="border-border/60">
                 <CardHeader className="space-y-4">
@@ -802,7 +901,10 @@ const DomainNamesList = memo(() => {
                 </DialogContent>
             </Dialog>
         </Reveal>
+        </TooltipProvider>
     );
 });
+
+DomainNamesList.displayName = "DomainNamesList";
 
 export default DomainNamesList;

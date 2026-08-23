@@ -93,6 +93,36 @@ export interface UpStream {
     weight: number;
 }
 
+export type DestinationHealth = "Unknown" | "Healthy" | "Unhealthy";
+
+export interface DestinationHealthState {
+    active: DestinationHealth;
+    passive: DestinationHealth;
+    effective: DestinationHealth;
+}
+
+export interface DestinationHealthInfo {
+    destinationId: string;
+    address?: string | null;
+    health: DestinationHealthState;
+}
+
+export interface ClusterHealth {
+    clusterId: string;
+    healthCheck?: {
+        enabled: boolean;
+        path: string | null;
+    };
+    destinations: DestinationHealthInfo[];
+}
+
+export interface ServerHealthSnapshot {
+    online: boolean;
+    supported?: boolean;
+    checkedAtUtc?: string;
+    clusters?: ClusterHealth[];
+}
+
 export enum StreamProtocol {
     Tcp = 0,
     Udp = 1,

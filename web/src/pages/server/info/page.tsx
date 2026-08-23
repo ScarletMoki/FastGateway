@@ -6,37 +6,20 @@ import { toast } from "sonner";
 import DomainNamesList from "./features/DomainNamesList";
 import Header from "./features/Header";
 import { TrafficPipelineVisualizer } from "./features/TrafficPipelineVisualizer";
-import { get } from "@/utils/fetch";
+import { getServerHealth } from "@/services/ServerService";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Reveal } from "@/components/motion";
 import { cn } from "@/lib/utils";
 import { useDomainStore, useServerStore } from "@/store/server";
-
-type DestinationHealth = "Unknown" | "Healthy" | "Unhealthy";
-
-type ServerHealthSnapshot = {
-    online: boolean;
-    supported?: boolean;
-    checkedAtUtc?: string;
-    clusters?: Array<{
-        clusterId: string;
-        healthCheck?: {
-            enabled: boolean;
-            path: string | null;
-        };
-        destinations: Array<{
-            destinationId: string;
-            address: string;
-            health: {
-                active: DestinationHealth;
-                passive: DestinationHealth;
-                effective: DestinationHealth;
-            };
-        }>;
-    }>;
-};
+import type { DestinationHealthInfo, ServerHealthSnapshot } from "@/types";
+import {
+    computeEffectiveHealth,
+    getProbeLabel,
+    getProxyLabel,
+    parseDestinationHealth,
+} from "./health";
 
 const ServerInfoPage = memo(() => {
     const { id } = useParams<{ id: string }>();
@@ -53,7 +36,7 @@ const ServerInfoPage = memo(() => {
         if (!id) return;
 
         setHealthLoading(true);
-        get(`/api/v1/server/${id}/health`)
+        getServerHealth(id)
             .then((res) => {
                 setHealth(res.data ?? null);
             })
@@ -92,15 +75,21 @@ const ServerInfoPage = memo(() => {
         let unhealthy = 0;
         let unknown = 0;
 
-        for (const destination of destinations) {
-            const effective = destination.health?.effective ?? "Unknown";
-            if (effective === "Healthy") healthy += 1;
-            else if (effective === "Unhealthy") unhealthy += 1;
+        const withStatus = destinations.map((destination) => {
+            const probe = parseDestinationHealth(destination.health?.active);
+            const proxy = parseDestinationHealth(destination.health?.passive);
+            const effective = computeEffectiveHealth(probe, proxy);
+            return { destination, probe, proxy, effective };
+        });
+
+        for (const item of withStatus) {
+            if (item.effective === "Healthy") healthy += 1;
+            else if (item.effective === "Unhealthy") unhealthy += 1;
             else unknown += 1;
         }
 
-        const unhealthyTargets = destinations
-            .filter((destination) => (destination.health?.effective ?? "Unknown") === "Unhealthy")
+        const unhealthyTargets = withStatus
+            .filter((item) => item.effective === "Unhealthy")
             .slice(0, 6);
 
         return {
@@ -159,7 +148,7 @@ const ServerInfoPage = memo(() => {
                         </div>
 
                         <CardDescription>
-                            当路由启用健康检查时，网关会定期探测上游节点健康并自动屏蔽非健康节点（无可用节点时返回 503）。
+                            当路由启用健康检查时，网关会定期探测上游节点，并按实际转发失败摘除异常代理（无可用节点时返回 503）。
                         </CardDescription>
                     </CardHeader>
 
@@ -204,13 +193,13 @@ const ServerInfoPage = memo(() => {
                                         </Badge>
                                     ) : null}
                                     <Badge variant="secondary" className="font-normal">
-                                        Healthy {summary.healthy}
+                                        健康 {summary.healthy}
                                     </Badge>
                                     <Badge variant="secondary" className="font-normal">
-                                        Unhealthy {summary.unhealthy}
+                                        异常 {summary.unhealthy}
                                     </Badge>
                                     <Badge variant="secondary" className="font-normal">
-                                        Unknown {summary.unknown}
+                                        探测中 {summary.unknown}
                                     </Badge>
                                 </div>
 
@@ -220,19 +209,13 @@ const ServerInfoPage = memo(() => {
                                             异常节点（最多显示 6 条）
                                         </div>
                                         <div className="space-y-1">
-                                            {summary.unhealthyTargets.map((destination) => (
-                                                <div
+                                            {summary.unhealthyTargets.map(({ destination, probe, proxy }) => (
+                                                <UnhealthyTargetRow
                                                     key={destination.destinationId}
-                                                    className="flex flex-wrap items-center justify-between gap-2"
-                                                >
-                                                    <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">
-                                                        {destination.address}
-                                                    </code>
-                                                    <Badge variant="outline" className="shrink-0 font-normal">
-                                                        {destination.health?.active ?? "Unknown"}/
-                                                        {destination.health?.passive ?? "Unknown"}
-                                                    </Badge>
-                                                </div>
+                                                    destination={destination}
+                                                    probe={probe}
+                                                    proxy={proxy}
+                                                />
                                             ))}
                                         </div>
                                     </div>
@@ -244,10 +227,43 @@ const ServerInfoPage = memo(() => {
             </Reveal>
 
             <Reveal delay={0.12}>
-                <DomainNamesList />
+                <DomainNamesList health={health} healthLoading={healthLoading} />
             </Reveal>
         </div>
     );
 });
+
+function UnhealthyTargetRow({
+    destination,
+    probe,
+    proxy,
+}: {
+    destination: DestinationHealthInfo;
+    probe: ReturnType<typeof parseDestinationHealth>;
+    proxy: ReturnType<typeof parseDestinationHealth>;
+}) {
+    return (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">
+                {destination.address}
+            </code>
+            <div className="flex shrink-0 flex-wrap gap-1">
+                <Badge variant="outline" className="font-normal">
+                    {getProbeLabel(true, probe)}
+                </Badge>
+                <Badge
+                    variant="outline"
+                    className={cn(
+                        "font-normal",
+                        proxy === "Unhealthy" &&
+                            "border-red-500/40 text-red-700 dark:text-red-300"
+                    )}
+                >
+                    {getProxyLabel(proxy)}
+                </Badge>
+            </div>
+        </div>
+    );
+}
 
 export default ServerInfoPage;
