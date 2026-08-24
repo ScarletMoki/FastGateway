@@ -842,17 +842,18 @@ public static class Gateway
         var timeoutSeconds = server.Timeout > 0 ? server.Timeout : 900;
         if (timeoutSeconds < 600) timeoutSeconds = 600;
 
-        // 默认出站客户端一律 HTTP/1.1（含 HTTPS 上游，ALPN 只出 http/1.1）：
-        // YARP 默认 Version=2.0，明文上游配合 Http2UnencryptedSupport 会先发 h2c
-        // prior-knowledge，失败再回退，建连翻倍最终 ENFILE。仅隧道对端按 h2c 设计。
+        // 与 v2.14.0 对齐：默认 Version=2.0 + OrLower。进程未开 Http2UnencryptedSupport 时，
+        // 明文 http:// 上游由 .NET 静默降级为 HTTP/1.1（不做 h2c 探测），
+        // HTTPS 上游经 ALPN 协商 HTTP/2 获得多路复用。
+        // 隧道对端按 h2c 设计，用 RequestVersionExact 显式启用明文 HTTP/2。
         return new ForwarderRequestConfig
         {
             ActivityTimeout = TimeSpan.FromSeconds(timeoutSeconds),
             AllowResponseBuffering = false,
-            Version = isTunnel ? HttpVersion.Version20 : HttpVersion.Version11,
+            Version = HttpVersion.Version20,
             VersionPolicy = isTunnel
-                ? HttpVersionPolicy.RequestVersionOrLower
-                : HttpVersionPolicy.RequestVersionExact
+                ? HttpVersionPolicy.RequestVersionExact
+                : HttpVersionPolicy.RequestVersionOrLower
         };
     }
 

@@ -309,7 +309,7 @@ public sealed class ClusterRequestFailoverMiddleware
                 AllowAutoRedirect = false,
                 AutomaticDecompression = DecompressionMethods.None,
                 UseCookies = false,
-                EnableMultipleHttp2Connections = false,
+                EnableMultipleHttp2Connections = true,
                 ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
                 RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8,
                 ConnectTimeout = TimeSpan.FromMilliseconds(timeout),
@@ -401,11 +401,13 @@ public sealed class ClusterRequestFailoverMiddleware
                 Version = version,
                 Enabled = true,
                 Entries = entries.ToArray(),
+                // 与 v2.14.0 对齐：未开 Http2UnencryptedSupport 时明文上游自动降级 HTTP/1.1，
+                // HTTPS 上游经 ALPN 协商 HTTP/2
                 RequestConfig = new ForwarderRequestConfig
                 {
                     ActivityTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds),
-                    Version = HttpVersion.Version11,
-                    VersionPolicy = HttpVersionPolicy.RequestVersionExact
+                    Version = HttpVersion.Version20,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
                 },
                 ConnectTimeoutMs = connectTimeoutMs,
                 BudgetMs = budgetMs
