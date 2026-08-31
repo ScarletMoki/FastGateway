@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { ThemeSwitch } from '@/components/ui/theme-switch';
 import { message } from '@/utils/toast';
 import { Activity, Eye, EyeOff, KeyRound, Lock, ShieldCheck } from 'lucide-react';
-import { Auth } from '@/services/AuthorizationService';
+import { Auth, getAdminChallengeConfig, type BotChallengeConfig } from '@/services/AuthorizationService';
+import TurnstileWidget from '@/components/TurnstileWidget';
 import { useNavigate } from 'react-router-dom';
 
 const LoginPage = () => {
@@ -15,7 +16,28 @@ const LoginPage = () => {
 
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    const [challengeConfig, setChallengeConfig] = useState<BotChallengeConfig | null>(null);
+    const [challengeConfigLoading, setChallengeConfigLoading] = useState(true);
+    const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
     const isDev = import.meta.env.DEV;
+
+    useEffect(() => {
+        let disposed = false;
+        getAdminChallengeConfig()
+            .then((response) => {
+                if (!disposed) setChallengeConfig(response.success ? response.data : null);
+            })
+            .catch(() => {
+                if (!disposed) setChallengeConfig(null);
+            })
+            .finally(() => {
+                if (!disposed) setChallengeConfigLoading(false);
+            });
+
+        return () => {
+            disposed = true;
+        };
+    }, []);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -23,18 +45,24 @@ const LoginPage = () => {
             message.error('请输入管理员密码');
             return;
         }
+        if (challengeConfig?.enabled && !turnstileToken) {
+            message.error('请先完成人机验证');
+            return;
+        }
 
         setLoading(true);
         try {
-            const token = await Auth(password);
+            const token = await Auth(password, turnstileToken);
             if (token.success) {
                 localStorage.setItem('token', token.data);
                 navigate('/dashboard');
                 message.success('登录成功！');
             } else {
+                setTurnstileToken(null);
                 message.error(token.message);
             }
         } catch (e) {
+            setTurnstileToken(null);
             message.error('登录失败，请稍后重试');
         }
         setLoading(false);
@@ -174,9 +202,24 @@ const LoginPage = () => {
                                     </div>
                                 </div>
 
+                                {challengeConfigLoading ? (
+                                    <div className="text-sm text-muted-foreground">正在加载人机验证…</div>
+                                ) : challengeConfig?.enabled && challengeConfig.configured && challengeConfig.siteKey ? (
+                                    <div className="space-y-2">
+                                        <TurnstileWidget
+                                            siteKey={challengeConfig.siteKey}
+                                            onToken={setTurnstileToken}
+                                            onError={() => message.error('人机验证加载失败，请刷新页面重试')}
+                                        />
+                                        <div className="text-xs text-muted-foreground">
+                                            登录前需要完成 Cloudflare 人机验证。
+                                        </div>
+                                    </div>
+                                ) : null}
+
                                 <Button
                                     type="submit"
-                                    disabled={loading}
+                                    disabled={loading || challengeConfigLoading || Boolean(challengeConfig?.enabled && (!challengeConfig.configured || !challengeConfig.siteKey))}
                                     className="h-11 w-full bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
                                 >
                                     {loading ? (

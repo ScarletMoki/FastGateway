@@ -59,6 +59,8 @@ export interface Server {
     enableRequestFailover: boolean;
     failoverConnectTimeoutMs: number;
     failoverBudgetMs: number;
+    maxConcurrentConnections: number | null;
+    maxConcurrentUpgradedConnections: number | null;
 }
 
 
@@ -71,6 +73,7 @@ export interface DomainName {
     headers: HeadersView[];
     tryFiles: string[];
     enable: boolean;
+    enableBotProtection: boolean;
     service: string | null;
     upStreams: UpStream[];
     enableHealthCheck: boolean;
@@ -153,6 +156,8 @@ export interface StreamForward {
     loadBalancing: StreamLoadBalancing;
     connectTimeoutMs: number;
     idleTimeoutSeconds: number;
+    maxTcpConnections: number;
+    maxUdpSessions: number;
     enableBlacklist: boolean;
     enableWhitelist: boolean;
     onLine: boolean;

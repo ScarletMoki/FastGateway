@@ -55,6 +55,7 @@ export default function UpdateDomain({
             headers: [],
             tryFiles: [],
             enable: true,
+            enableBotProtection: false,
             service: "",
             upStreams: [],
             enableHealthCheck: false,
@@ -323,6 +324,30 @@ export default function UpdateDomain({
                                     </SelectContent>
                                 </Select>
                             </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-3 py-2">
+                            <div className="space-y-0.5">
+                                <Label
+                                    htmlFor="update-domain-bot-protection"
+                                    className="text-sm font-medium"
+                                >
+                                    启用机器人保护
+                                </Label>
+                                <div className="text-xs text-muted-foreground">
+                                    使用 Cloudflare Turnstile 验证业务访客，需先配置全局密钥。
+                                </div>
+                            </div>
+                            <Switch
+                                id="update-domain-bot-protection"
+                                checked={value.enableBotProtection}
+                                onCheckedChange={(checked) =>
+                                    setValue((prev) => ({
+                                        ...prev,
+                                        enableBotProtection: checked,
+                                    }))
+                                }
+                            />
                         </div>
                     </TabsContent>
 

@@ -15,6 +15,7 @@ public sealed class StatisticsOverviewDto
     public long Blocked { get; set; }
     public long Blocked403 { get; set; }
     public long Blocked429 { get; set; }
+    public long BlockedBot { get; set; }
     public double BlockRate { get; set; }
     public long AttackIps { get; set; }
     public int AbnormalIpsLive { get; set; }

@@ -51,6 +51,11 @@ public sealed class DomainName
     public bool Enable { get; set; }
 
     /// <summary>
+    /// 是否启用浏览器机器人保护（Cloudflare Turnstile）
+    /// </summary>
+    public bool EnableBotProtection { get; set; }
+
+    /// <summary>
     /// 服务
     /// </summary>
     public string? Service { get; set; }

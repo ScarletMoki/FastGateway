@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { Ban, ShieldAlert, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Stagger, StaggerItem, SwapFade } from "@/components/motion";
@@ -42,7 +42,7 @@ interface AbnormalIpRow {
   lastStatusCode?: number;
 }
 
-const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝", 4: "地区封禁" };
+const BLOCK_LABELS: Record<number, string> = { 1: "黑名单", 2: "限流", 3: "白名单拒绝", 4: "地区封禁", 5: "机器人挑战" };
 
 export default function SecurityTab() {
   const { range, host } = useDashboardStore();
@@ -92,10 +92,12 @@ export default function SecurityTab() {
   const reasonItems = useMemo(() => {
     const blocked403 = overview?.blocked403 ?? 0;
     const blocked429 = overview?.blocked429 ?? 0;
+    const blockedBot = overview?.blockedBot ?? 0;
     const total = blocked403 + blocked429;
     if (total === 0) return [];
     return [
-      { key: "黑名单/白名单 (403)", count: blocked403, percent: (blocked403 / total) * 100 },
+      { key: "其他策略 (403)", count: Math.max(0, blocked403 - blockedBot), percent: (Math.max(0, blocked403 - blockedBot) / total) * 100 },
+      { key: "机器人挑战 (403)", count: blockedBot, percent: (blockedBot / total) * 100 },
       { key: "限流 (429)", count: blocked429, percent: (blocked429 / total) * 100 },
     ].filter((x) => x.count > 0);
   }, [overview]);
@@ -154,7 +156,7 @@ export default function SecurityTab() {
             onSelect={() => toggleMetric("blockRate")}
           />
           <StatTile
-            label="黑名单拦截"
+            label="403 拦截"
             value={overview?.blocked403 ?? 0}
             format={formatCount}
             loading={loading}

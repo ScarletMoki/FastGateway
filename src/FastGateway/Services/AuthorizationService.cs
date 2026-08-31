@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using FastGateway.Dto;
 using FastGateway.Infrastructure;
 using FastGateway.Options;
 
@@ -14,18 +15,34 @@ public static class AuthorizationServiceExtensions
             .AddEndpointFilter<ResultFilter>()
             .WithDisplayName("授权");
 
-        routeGroupBuilder.MapPost(string.Empty, (JwtHelper jwtHelper, string password) =>
-        {
-            if (password == FastGatewayOptions.Password)
+        routeGroupBuilder.MapGet("challenge-config", (BotProtectionService botProtection) =>
+            botProtection.GetAdminChallengeConfig());
+
+        routeGroupBuilder.MapPost(string.Empty,
+            async (HttpContext context, JwtHelper jwtHelper, BotProtectionService botProtection,
+                AuthorizationRequest request, CancellationToken cancellationToken) =>
             {
-                var token = jwtHelper.CreateToken();
+                if (botProtection.AdminLoginEnabled)
+                {
+                    var verification = await botProtection.VerifyTurnstileAsync(
+                        request.TurnstileToken,
+                        "admin-login",
+                        context.Request.Host.Host,
+                        context.Connection.RemoteIpAddress?.ToString(),
+                        cancellationToken);
 
-                return token;
-            }
+                    if (verification.Status == BotVerificationStatus.Unavailable)
+                        throw new ValidationException("人机验证服务暂时不可用，请稍后重试");
 
+                    if (verification.Status != BotVerificationStatus.Success)
+                        throw new ValidationException("请先完成人机验证");
+                }
 
-            throw new ValidationException("密码错误");
-        });
+                if (request.Password == FastGatewayOptions.Password)
+                    return jwtHelper.CreateToken();
+
+                throw new ValidationException("密码错误");
+            });
 
         return app;
     }

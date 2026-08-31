@@ -24,19 +24,23 @@ public sealed class StatisticsCaptureMiddleware
     {
         var path = context.Request.Path;
         if (path.StartsWithSegments("/internal/gateway", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWithSegments("/.well-known/acme-challenge", StringComparison.OrdinalIgnoreCase))
+            path.StartsWithSegments("/.well-known/acme-challenge", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWithSegments(BotProtectionMiddleware.ChallengePath, StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWithSegments(BotProtectionMiddleware.VerifyPath, StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
         }
 
         var start = Stopwatch.GetTimestamp();
+        GatewayResourceMetrics.HttpRequestOpened();
         try
         {
             await _next(context);
         }
         finally
         {
+            GatewayResourceMetrics.HttpRequestClosed();
             Record(context, start);
         }
     }
@@ -65,7 +69,7 @@ public sealed class StatisticsCaptureMiddleware
                 UserAgent = request.Headers.UserAgent.Count > 0 ? request.Headers.UserAgent.ToString() : null,
                 Referer = request.Headers.Referer.Count > 0 ? request.Headers.Referer.ToString() : null,
                 Blocked = blocked,
-                IsPage = IsPageView(request, status)
+                IsPage = blocked == 0 && IsPageView(request, status)
             });
         }
         catch

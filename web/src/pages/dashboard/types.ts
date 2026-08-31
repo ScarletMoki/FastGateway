@@ -1,4 +1,4 @@
-export type StatRange = "1h" | "24h" | "7d" | "30d";
+﻿export type StatRange = "1h" | "24h" | "7d" | "30d";
 
 export interface StatisticsOverview {
   available?: boolean;
@@ -10,6 +10,7 @@ export interface StatisticsOverview {
   blocked: number;
   blocked403: number;
   blocked429: number;
+  blockedBot: number;
   blockRate: number;
   attackIps: number;
   abnormalIpsLive: number;

@@ -19,6 +19,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -415,7 +416,8 @@ public static class Gateway
                 kestrel.RequestHeaderEncodingSelector = _ => Encoding.UTF8;
                 // and/or
                 kestrel.ResponseHeaderEncodingSelector = _ => Encoding.UTF8;
-                kestrel.Limits.MaxConcurrentUpgradedConnections = null;
+                kestrel.Limits.MaxConcurrentConnections = server.MaxConcurrentConnections;
+                kestrel.Limits.MaxConcurrentUpgradedConnections = server.MaxConcurrentUpgradedConnections;
                 kestrel.AddServerHeader = false;
             }));
 
@@ -435,10 +437,12 @@ public static class Gateway
             builder.Services.AddTunnel();
             // 供 AgentManagerMiddleware 获知节点连接所属的网关 Server（断线清理路由需要）
             builder.Services.AddSingleton(server);
+            builder.Services.AddSingleton<FailoverHttpClientPool>();
             builder.Services.AddSingleton<StandardForwarderHttpClientFactory>();
             builder.Services.AddSingleton<FastGatewayForwarderHttpClientFactory>();
             builder.Services.AddSingleton<IForwarderHttpClientFactory>(s => s.GetRequiredService<FastGatewayForwarderHttpClientFactory>());
             builder.Services.AddSingleton<ConfigurationService>();
+            builder.Services.AddBotProtection(builder.Configuration);
 
             if (server.StaticCompress)
                 builder.Services.AddResponseCompression();
@@ -490,8 +494,7 @@ public static class Gateway
                             if (incoming.Count > 0) _ = int.TryParse(incoming[0], out hops);
 
                             var proxyHeaders = transformContext.ProxyRequest.Headers;
-                            proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
-                            proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
+                            RemoveInternalRequestHeaders(proxyHeaders);
                             proxyHeaders.TryAddWithoutValidation(ClusterRelay.RelayCountHeader,
                                 (hops + 1).ToString());
 
@@ -505,9 +508,7 @@ public static class Gateway
                         // 直连真实上游前剥离集群内部头，避免泄漏到业务服务
                         context.AddRequestTransform(transformContext =>
                         {
-                            var proxyHeaders = transformContext.ProxyRequest.Headers;
-                            proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
-                            proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
+                            RemoveInternalRequestHeaders(transformContext.ProxyRequest.Headers);
                             return ValueTask.CompletedTask;
                         });
 
@@ -686,6 +687,7 @@ public static class Gateway
 
             // 黑名单默认启用（安全防护），白名单按服务开关控制
             app.UseBlacklistMiddleware(blacklistAndWhitelists, enableBlacklist: true, enableWhitelist: server.EnableWhitelist);
+            app.UseBotProtection();
 
             app.UseClusterRequestFailover(server.Id, gatewayVersion);
             app.UseProxyErrorResponse(gatewayVersion);
@@ -741,6 +743,7 @@ public static class Gateway
                 });
             }
 
+            app.MapBotProtectionEndpoints();
             app.MapReverseProxy();
 
             app.Lifetime.ApplicationStopping.Register(() => { GatewayWebApplications.Remove(server.Id, out _); });
@@ -762,6 +765,33 @@ public static class Gateway
     ///     Alt-Svc 头按端口预生成（每网关端口固定，避免每请求字符串拼接）
     /// </summary>
     private static readonly ConcurrentDictionary<int, string> AltSvcCache = new();
+
+    private static void RemoveInternalRequestHeaders(HttpRequestHeaders proxyHeaders)
+    {
+        proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
+        proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
+
+        if (!proxyHeaders.TryGetValues("Cookie", out var cookieValues)) return;
+
+        var retainedCookies = new List<string>();
+        foreach (var cookieHeader in cookieValues)
+        {
+            foreach (var cookie in cookieHeader.Split(';'))
+            {
+                var separator = cookie.IndexOf('=');
+                var name = (separator >= 0 ? cookie[..separator] : cookie).Trim();
+                if (name.Length == 0 || string.Equals(name, BotProtectionService.ClearanceCookieName,
+                        StringComparison.Ordinal))
+                    continue;
+
+                retainedCookies.Add(cookie.Trim());
+            }
+        }
+
+        proxyHeaders.Remove("Cookie");
+        if (retainedCookies.Count > 0)
+            proxyHeaders.TryAddWithoutValidation("Cookie", string.Join("; ", retainedCookies));
+    }
 
     private static WebApplication UseInitGatewayMiddleware(this WebApplication app)
     {
@@ -937,11 +967,15 @@ public static class Gateway
 
         foreach (var domainName in domainNames)
         {
-            var path = domainName.Path ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(path) || path == "/")
-                path = "/{**catch-all}";
+            var routePath = domainName.Path?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(routePath) || routePath == "/")
+                routePath = "/";
             else
-                path = $"/{path.TrimStart('/')}/{{**catch-all}}";
+                routePath = $"/{routePath.Trim('/') }";
+
+            var path = routePath == "/"
+                ? "/{**catch-all}"
+                : $"{routePath}/{{**catch-all}}";
 
             // 集群「访问节点」中继：路由指定了其他节点访问上游时，本节点仅做二跳转发
             // （Worker → Master 直连回源；Master → Worker 走集群隧道），保留原始 Host 与完整路径
@@ -958,7 +992,7 @@ public static class Gateway
                         Hosts = domainName.Domains,
                         Path = path
                     },
-                    Metadata = new Dictionary<string, string>(0)
+                    Metadata = BotProtectionService.CreateRouteMetadata(domainName, routePath)
                 });
 
                 clusters.Add(new ClusterConfig
@@ -1000,7 +1034,7 @@ public static class Gateway
                     Hosts = domainName.Domains,
                     Path = path
                 },
-                Metadata = routeMetadata
+                Metadata = BotProtectionService.CreateRouteMetadata(domainName, routePath, routeMetadata)
             };
 
             // 隧道目的地需保留访客原始 Host：客户端本地 YARP 按域名匹配代理规则，
@@ -1008,6 +1042,7 @@ public static class Gateway
             if (IsTunnelService(domainName.Service) && string.IsNullOrEmpty(domainName.Host))
                 route = route with
                 {
+                    Metadata = BotProtectionService.CreateRouteMetadata(domainName, routePath, route.Metadata),
                     Transforms =
                     [
                         new Dictionary<string, string> { ["RequestHeaderOriginalHost"] = "true" }

@@ -1,14 +1,28 @@
+﻿
 
-
-import { post } from "@/utils/fetch"
+import { get, postJson } from "@/utils/fetch"
 
 const baseUrl = "/api/v1/authorization";
 
-
-const Auth = (password: string) => {
-    return post(baseUrl + "?password=" + password);
+export interface ApiResponse<T> {
+    success: boolean;
+    message: string;
+    data: T;
 }
 
-export {
-    Auth
+export interface BotChallengeConfig {
+    enabled: boolean;
+    configured: boolean;
+    siteKey: string;
 }
+
+export const getAdminChallengeConfig = (): Promise<ApiResponse<BotChallengeConfig>> => {
+    return get(`${baseUrl}/challenge-config`);
+};
+
+export const Auth = (password: string, turnstileToken?: string | null): Promise<ApiResponse<string>> => {
+    return postJson(baseUrl, {
+        password,
+        turnstileToken: turnstileToken ?? null,
+    });
+};

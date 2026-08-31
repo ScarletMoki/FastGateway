@@ -31,6 +31,7 @@ public static class Program
         FastGatewayOptions.Initialize(builder.Configuration);
 
         builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Name));
+        builder.Services.AddBotProtection(builder.Configuration);
 
         builder.Services.AddHttpClient();
 

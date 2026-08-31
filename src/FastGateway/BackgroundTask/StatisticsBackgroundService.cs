@@ -315,10 +315,10 @@ public sealed class StatisticsBackgroundService(
         ExecuteBatch(connection,
             """
             INSERT INTO stat_bucket
-                (granularity, bucket, host, requests, page_views, blocked, blocked_403, blocked_429,
+                (granularity, bucket, host, requests, page_views, blocked, blocked_403, blocked_429, blocked_bot,
                  status_2xx, status_3xx, status_4xx, status_5xx, elapsed_sum)
             VALUES
-                (@Granularity, @Bucket, @Host, @Requests, @PageViews, @Blocked, @Blocked403, @Blocked429,
+                (@Granularity, @Bucket, @Host, @Requests, @PageViews, @Blocked, @Blocked403, @Blocked429, @BlockedBot,
                  @Status2xx, @Status3xx, @Status4xx, @Status5xx, @ElapsedSum)
             ON CONFLICT (granularity, bucket, host) DO UPDATE SET
                 requests    = requests    + excluded.requests,
@@ -326,6 +326,7 @@ public sealed class StatisticsBackgroundService(
                 blocked     = blocked     + excluded.blocked,
                 blocked_403 = blocked_403 + excluded.blocked_403,
                 blocked_429 = blocked_429 + excluded.blocked_429,
+                blocked_bot = blocked_bot + excluded.blocked_bot,
                 status_2xx  = status_2xx  + excluded.status_2xx,
                 status_3xx  = status_3xx  + excluded.status_3xx,
                 status_4xx  = status_4xx  + excluded.status_4xx,
@@ -341,6 +342,7 @@ public sealed class StatisticsBackgroundService(
                 cmd.SetParam("@Blocked", pair.Value.Blocked);
                 cmd.SetParam("@Blocked403", pair.Value.Blocked403);
                 cmd.SetParam("@Blocked429", pair.Value.Blocked429);
+                cmd.SetParam("@BlockedBot", pair.Value.BlockedBot);
                 cmd.SetParam("@Status2xx", pair.Value.Status2xx);
                 cmd.SetParam("@Status3xx", pair.Value.Status3xx);
                 cmd.SetParam("@Status4xx", pair.Value.Status4xx);
@@ -460,6 +462,7 @@ public sealed class StatisticsBackgroundService(
             agg.Blocked++;
             if (entry.Blocked == (byte)BlockReason.RateLimit) agg.Blocked429++;
             else agg.Blocked403++;
+            if (entry.Blocked == (byte)BlockReason.BotChallenge) agg.BlockedBot++;
         }
 
         switch (entry.Status / 100)
@@ -675,6 +678,7 @@ public sealed class StatisticsBackgroundService(
         public long Blocked;
         public long Blocked403;
         public long Blocked429;
+        public long BlockedBot;
         public long Status2xx;
         public long Status3xx;
         public long Status4xx;

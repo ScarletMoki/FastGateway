@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { AreaChart } from "@/components/ui/area-chart";
@@ -56,7 +56,7 @@ const COPY: Record<MetricId, { title: string; hint: string }> = {
   blockRate: { title: "拦截率", hint: "拦截次数 / 总请求。" },
   attackIps: { title: "攻击 / 异常 IP", hint: "统计窗口内被标记的攻击源，以及近 60 秒错误 IP。" },
   abnormalLive: { title: "实时异常 IP", hint: "近 60 秒窗口内持续报错的源 IP。" },
-  blocked403: { title: "黑名单 / 访问控制", hint: "策略返回 403 的拦截。" },
+  blocked403: { title: "403 / 访问控制", hint: "策略或机器人保护返回 403 的拦截。" },
   blocked429: { title: "限流拦截", hint: "触发 Rate Limit 返回 429 的请求。" },
 };
 
@@ -230,7 +230,7 @@ export function MetricDetail({
                 <span className="font-semibold tabular-nums">
                   {formatCount(overview?.blocked ?? 0)}
                   <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    403 {formatCount(overview?.blocked403 ?? 0)} · 429 {formatCount(overview?.blocked429 ?? 0)}
+                    403 {formatCount(overview?.blocked403 ?? 0)} · 机器人 {formatCount(overview?.blockedBot ?? 0)} · 429 {formatCount(overview?.blocked429 ?? 0)}
                   </span>
                 </span>
               </div>
@@ -262,7 +262,10 @@ export function MetricDetail({
             <div className="space-y-2">
               <div className="flex flex-wrap gap-1.5">
                 <Badge variant="outline" className="font-normal">
-                  黑名单 {formatCount(overview?.blocked403 ?? 0)}
+                  403 拦截 {formatCount(overview?.blocked403 ?? 0)}
+                </Badge>
+                <Badge variant="outline" className="font-normal">
+                  机器人挑战 {formatCount(overview?.blockedBot ?? 0)}
                 </Badge>
                 <Badge variant="outline" className="font-normal">
                   限流 {formatCount(overview?.blocked429 ?? 0)}

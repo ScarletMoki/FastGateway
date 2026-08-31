@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 using Core.Entities;
 using Core.Entities.Core;
 using FastGateway.Cluster;
@@ -121,6 +121,7 @@ namespace FastGateway.Infrastructure;
 // ===== 系统信息 =====
 [JsonSerializable(typeof(SystemVersionDto))]
 [JsonSerializable(typeof(SystemInfoDto))]
+[JsonSerializable(typeof(SystemResourceDto))]
 // ===== 服务健康 =====
 [JsonSerializable(typeof(ServerHealthDto))]
 [JsonSerializable(typeof(ClusterHealthDto))]
@@ -144,6 +145,13 @@ namespace FastGateway.Infrastructure;
 // ===== 网关内部 / 错误响应 =====
 [JsonSerializable(typeof(DnsChallengeRecordDto))]
 [JsonSerializable(typeof(CodeMessageDto))]
+[JsonSerializable(typeof(AuthorizationRequest))]
+[JsonSerializable(typeof(BotChallengeConfigDto))]
+[JsonSerializable(typeof(BotVerifyRequest))]
+[JsonSerializable(typeof(BotChallengeResponse))]
+[JsonSerializable(typeof(BotChallengeState))]
+[JsonSerializable(typeof(BotClearancePayload))]
+[JsonSerializable(typeof(TurnstileVerifyResponse))]
 [JsonSerializable(typeof(ProxyErrorDto))]
 [JsonSerializable(typeof(Tunnel))]
 [JsonSerializable(typeof(Tunnel.TunnelProxy))]
