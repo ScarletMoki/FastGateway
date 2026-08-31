@@ -1,12 +1,21 @@
 ﻿using System.Net.WebSockets;
 using System.Threading.Tasks.Sources;
+using FastGateway.Infrastructure;
 
 namespace FastGateway.Tunnels;
 
-internal class WebSocketStream(WebSocket ws) : Stream, IValueTaskSource<object?>, ICloseable
+internal sealed class WebSocketStream : Stream, IValueTaskSource<object?>, ICloseable
 {
+    private readonly WebSocket _ws;
     private readonly object _sync = new();
     private ManualResetValueTaskSourceCore<object?> _tcs = new() { RunContinuationsAsynchronously = true };
+    private int _disposed;
+
+    public WebSocketStream(WebSocket ws)
+    {
+        _ws = ws;
+        GatewayResourceMetrics.WebSocketOpened();
+    }
 
     internal ValueTask<object?> StreamCompleteTask => new(this, _tcs.Version);
 
@@ -24,29 +33,24 @@ internal class WebSocketStream(WebSocket ws) : Stream, IValueTaskSource<object?>
         set => throw new NotSupportedException();
     }
 
-    public bool IsClosed => ws.State != WebSocketState.Open;
+    public bool IsClosed
+    {
+        get
+        {
+            try
+            {
+                return _ws.State != WebSocketState.Open;
+            }
+            catch (ObjectDisposedException)
+            {
+                return true;
+            }
+        }
+    }
 
     public void Abort()
     {
-        // Debug.Assert(!Thread.CurrentThread.IsThreadPoolThread);
-        ws.Abort();
-
-        // The shutdown path is currently synchronous but at least we're not blocking a threadpool thread
-        // Attempt a graceful close
-        //using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        //_ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", timeout.Token).GetAwaiter().GetResult();
-        // Wait for closed to be sent back otherwise abort
-        //if (_ws.State != WebSocketState.Closed)
-        //{
-        //    _ws.Abort();
-        //}
-
-        lock (_sync)
-        {
-            if (GetStatus(_tcs.Version) != ValueTaskSourceStatus.Pending) return;
-
-            _tcs.SetResult(null);
-        }
+        CompleteAndDispose();
     }
 
     public object? GetResult(short token)
@@ -95,35 +99,70 @@ internal class WebSocketStream(WebSocket ws) : Stream, IValueTaskSource<object?>
         return Task.CompletedTask;
     }
 
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        return ws.SendAsync(buffer, WebSocketMessageType.Binary, false, cancellationToken);
+        try
+        {
+            await _ws.SendAsync(buffer, WebSocketMessageType.Binary, false, cancellationToken);
+        }
+        catch
+        {
+            CompleteAndDispose();
+            throw;
+        }
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        var result = await ws.ReceiveAsync(buffer, cancellationToken);
+        ValueWebSocketReceiveResult result;
+        try
+        {
+            result = await _ws.ReceiveAsync(buffer, cancellationToken);
+        }
+        catch
+        {
+            CompleteAndDispose();
+            throw;
+        }
 
-        if (result.MessageType == WebSocketMessageType.Close) return 0;
+        if (result.MessageType == WebSocketMessageType.Close)
+        {
+            CompleteAndDispose();
+            return 0;
+        }
 
         return result.Count;
     }
 
     protected override void Dispose(bool disposing)
     {
+        CompleteAndDispose();
+    }
+
+    private void CompleteAndDispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            try { _ws.Abort(); }
+            catch { /* ignore */ }
+            try { _ws.Dispose(); }
+            catch { /* ignore */ }
+            GatewayResourceMetrics.WebSocketClosed();
+        }
+
         lock (_sync)
         {
-            if (GetStatus(_tcs.Version) != ValueTaskSourceStatus.Pending) return;
-
-            // This might seem evil but we're using dispose to know if the stream
-            // has been given discarded by http client. We trigger the continuation and take back ownership
-            // of it here.
-            _tcs.SetResult(null);
+            if (_tcs.GetStatus(_tcs.Version) == ValueTaskSourceStatus.Pending)
+                _tcs.SetResult(null);
         }
     }
 
     public void Reset()
     {
-        _tcs.Reset();
+        lock (_sync)
+        {
+            if (_disposed != 0) return;
+            _tcs.Reset();
+        }
     }
 }

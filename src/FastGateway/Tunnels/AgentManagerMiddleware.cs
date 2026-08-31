@@ -64,6 +64,7 @@ internal partial class AgentManagerMiddleware(
         var host = "node_" + nodeName;
 
         AgentClient? client = null;
+        var added = false;
         try
         {
             // 创建连接
@@ -77,14 +78,12 @@ internal partial class AgentManagerMiddleware(
             await using var _ = client;
             if (await agentClientManager.AddAsync(client, default))
             {
+                added = true;
                 Log.LogNodeConnected(logger, nodeName, heartbeatSeconds);
                 TunnelClientProxy.OnConnected(nodeName, client, server);
 
                 // 等待连接关闭
                 await connection.WaitForCloseAsync();
-
-                // 从客户管理器中移除客户端对象
-                await agentClientManager.RemoveAsync(client, default);
             }
         }
         catch (Exception e)
@@ -96,6 +95,12 @@ internal partial class AgentManagerMiddleware(
         {
             if (client != null)
             {
+                if (added)
+                {
+                    try { await agentClientManager.RemoveAsync(client, CancellationToken.None); }
+                    catch { /* ignored */ }
+                }
+
                 // 更新离线状态与最近连接时间，并清理该节点的 YARP 路由
                 TunnelClientProxy.OnDisconnected(nodeName, client);
                 Log.LogNodeDisconnected(logger, nodeName);

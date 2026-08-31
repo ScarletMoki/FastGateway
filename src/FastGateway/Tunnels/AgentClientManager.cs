@@ -9,10 +9,12 @@ namespace FastGateway.Tunnels;
 ///     客户端管理器
 /// </summary>
 [DebuggerDisplay("Count = {Count}")]
-public sealed class AgentClientManager : IEnumerable
+public sealed class AgentClientManager : IEnumerable, IAsyncDisposable
 {
     private readonly AgentStateChannel _clientStateChannel;
     private readonly ConcurrentDictionary<string, AgentClient> _dictionary = new();
+    private readonly object _lifecycleSync = new();
+    private int _disposed;
 
     public AgentClientManager(AgentStateChannel clientStateChannel)
     {
@@ -42,15 +44,39 @@ public sealed class AgentClientManager : IEnumerable
     /// <returns></returns>
     public async ValueTask<bool> AddAsync(AgentClient client, CancellationToken cancellationToken)
     {
-        var clientId = client.Id;
-        if (_dictionary.TryRemove(clientId.ToLowerInvariant(), out var existClient)) await existClient.DisposeAsync();
-
-        if (_dictionary.TryAdd(clientId.ToLowerInvariant(), client))
+        var clientId = client.Id.ToLowerInvariant();
+        AgentClient? existClient;
+        lock (_lifecycleSync)
         {
-            await _clientStateChannel.WriteAsync(client, true, cancellationToken);
-            return true;
+            if (_disposed != 0) return false;
+            _dictionary.TryRemove(clientId, out existClient);
+            if (!_dictionary.TryAdd(clientId, client)) return false;
         }
 
+        try
+        {
+            if (existClient is not null) await existClient.DisposeAsync();
+            await _clientStateChannel.WriteAsync(client, true, cancellationToken);
+
+            lock (_lifecycleSync)
+            {
+                if (_disposed == 0 && _dictionary.TryGetValue(clientId, out var current) &&
+                    ReferenceEquals(current, client))
+                    return true;
+            }
+        }
+        catch
+        {
+        }
+
+        lock (_lifecycleSync)
+        {
+            if (_dictionary.TryGetValue(clientId, out var current) && ReferenceEquals(current, client))
+                _dictionary.TryRemove(clientId, out _);
+        }
+
+        try { await client.DisposeAsync(); }
+        catch { /* ignored */ }
         return false;
     }
 
@@ -62,19 +88,17 @@ public sealed class AgentClientManager : IEnumerable
     /// <returns></returns>
     public async ValueTask<bool> RemoveAsync(AgentClient client, CancellationToken cancellationToken)
     {
-        var clientId = client.Id;
-        if (_dictionary.TryRemove(clientId.ToLowerInvariant(), out var existClient))
+        var clientId = client.Id.ToLowerInvariant();
+        lock (_lifecycleSync)
         {
-            if (ReferenceEquals(existClient, client))
-            {
-                await _clientStateChannel.WriteAsync(client, false, cancellationToken);
-                return true;
-            }
-
-            _dictionary.TryAdd(clientId, existClient);
+            if (!_dictionary.TryGetValue(clientId, out var existClient) ||
+                !ReferenceEquals(existClient, client) ||
+                !_dictionary.TryRemove(clientId, out _))
+                return false;
         }
 
-        return false;
+        await _clientStateChannel.WriteAsync(client, false, cancellationToken);
+        return true;
     }
 
 
@@ -82,5 +106,19 @@ public sealed class AgentClientManager : IEnumerable
     public IEnumerator<AgentClient> GetEnumerator()
     {
         foreach (var keyValue in _dictionary) yield return keyValue.Value;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        AgentClient[] clients;
+        lock (_lifecycleSync)
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            clients = _dictionary.Values.ToArray();
+            _dictionary.Clear();
+        }
+
+        foreach (var client in clients)
+            await client.DisposeAsync();
     }
 }

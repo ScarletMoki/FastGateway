@@ -1,4 +1,5 @@
 ﻿using Core;
+using FastGateway.Infrastructure;
 
 namespace FastGateway.Tunnels;
 
@@ -10,7 +11,11 @@ public sealed partial class HttpTunnel(Stream inner, Guid tunnelId, TransportPro
 {
     private readonly TaskCompletionSource _closeTaskCompletionSource = new();
     private readonly long _tickCout = Environment.TickCount64;
+    private readonly object _lifecycleSync = new();
     private AgentClientConnection? _connection;
+    private bool _counted;
+    private bool _closed;
+    private int _disposed;
 
     /// <summary>
     ///     等待HttpClient对其关闭
@@ -27,32 +32,53 @@ public sealed partial class HttpTunnel(Stream inner, Guid tunnelId, TransportPro
     /// </summary>
     public TransportProtocol Protocol { get; } = protocol;
 
-    public void BindConnection(AgentClientConnection connection)
+    public bool BindConnection(AgentClientConnection connection)
     {
-        _connection = connection;
+        lock (_lifecycleSync)
+        {
+            if (_closed || _counted || !connection.TryBindHttpTunnel(this)) return false;
+
+            _connection = connection;
+            _counted = true;
+            GatewayResourceMetrics.HttpTunnelOpened();
+            return true;
+        }
     }
 
-    public override ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
-        SetClosedResult();
-        return Inner.DisposeAsync();
+        if (!SetClosedResult()) return;
+        await Inner.DisposeAsync();
     }
 
     protected override void Dispose(bool disposing)
     {
-        SetClosedResult();
+        if (!SetClosedResult()) return;
         Inner.Dispose();
     }
 
-    private void SetClosedResult()
+    private bool SetClosedResult()
     {
-        if (_closeTaskCompletionSource.TrySetResult())
+        int? httpTunnelCount;
+        AgentClientConnection? connection;
+        lock (_lifecycleSync)
         {
-            var httpTunnelCount = _connection?.DecrementHttpTunnelCount();
-            var lifeTime = TimeSpan.FromMilliseconds(Environment.TickCount64 - _tickCout);
-            Log.LogTunnelClosed(logger, _connection?.ClientId, Protocol, Id, lifeTime,
-                httpTunnelCount);
+            if (_disposed != 0) return false;
+
+            _disposed = 1;
+            _closed = true;
+            connection = _connection;
+            httpTunnelCount = _counted && connection is not null
+                ? connection.DecrementHttpTunnelCount(this)
+                : null;
+            if (_counted) GatewayResourceMetrics.HttpTunnelClosed();
+            _counted = false;
         }
+
+        _closeTaskCompletionSource.TrySetResult();
+        var lifeTime = TimeSpan.FromMilliseconds(Environment.TickCount64 - _tickCout);
+        Log.LogTunnelClosed(logger, connection?.ClientId, Protocol, Id, lifeTime, httpTunnelCount);
+        return true;
     }
 
     public override string ToString()

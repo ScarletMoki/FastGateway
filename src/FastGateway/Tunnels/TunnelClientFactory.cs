@@ -10,10 +10,10 @@ namespace FastGateway.Tunnels;
 ///     隧道出站工厂：每个网关实例共用一份 handler（ConnectCallback 绑定本实例的 Agent）。
 ///     避免每条隧道路由各建一个连接池。
 /// </summary>
-internal class TunnelClientFactory(
+internal sealed class TunnelClientFactory(
     AgentClientManager agentClientManager,
     AgentTunnelFactory agentTunnelFactory)
-    : IForwarderHttpClientFactory
+    : IForwarderHttpClientFactory, IDisposable
 {
     private readonly SocketsHttpHandler _handler = CreateHandler(agentClientManager, agentTunnelFactory);
 
@@ -69,6 +69,11 @@ internal class TunnelClientFactory(
         };
 
         return handler;
+    }
+
+    public void Dispose()
+    {
+        _handler.Dispose();
     }
 
     private static async ValueTask<Stream> DefaultConnectCallback(

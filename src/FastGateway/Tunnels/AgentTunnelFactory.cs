@@ -9,8 +9,7 @@ namespace FastGateway.Tunnels;
 /// <param name="logger"></param>
 public partial class AgentTunnelFactory(ILogger<AgentTunnelFactory> logger)
 {
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<HttpTunnel>> _httpTunnelCompletionSources =
-        new();
+    private readonly ConcurrentDictionary<Guid, PendingHttpTunnel> _httpTunnelCompletionSources = new();
 
     /// <summary>
     ///     创建HttpTunnel
@@ -23,23 +22,38 @@ public partial class AgentTunnelFactory(ILogger<AgentTunnelFactory> logger)
         CancellationToken cancellationToken)
     {
         var tunnelId = Guid.NewGuid();
-        var httpTunnelSource = new TaskCompletionSource<HttpTunnel>();
-        if (!_httpTunnelCompletionSources.TryAdd(tunnelId, httpTunnelSource))
+        var pendingTunnel = new PendingHttpTunnel();
+        if (!_httpTunnelCompletionSources.TryAdd(tunnelId, pendingTunnel))
             throw new SystemException($"系统中已存在{tunnelId}的tunnelId");
 
+        HttpTunnel? ownedTunnel = null;
         try
         {
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, connection.DisposedToken);
+            cancellationToken = linkedCts.Token;
+
             var stopwatch = Stopwatch.StartNew();
             Log.LogTunnelCreating(logger, connection.ClientId, tunnelId);
             await connection.CreateHttpTunnelAsync(tunnelId, cancellationToken);
-            var httpTunnel = await httpTunnelSource.Task.WaitAsync(cancellationToken);
+            var httpTunnel = await pendingTunnel.Source.Task.WaitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            var httpTunnelCount = connection.IncrementHttpTunnelCount();
-            httpTunnel.BindConnection(connection);
+            if (!pendingTunnel.TryClaim(httpTunnel))
+            {
+                await httpTunnel.DisposeAsync();
+                throw new OperationCanceledException("控制连接已关闭");
+            }
+
+            ownedTunnel = httpTunnel;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!httpTunnel.BindConnection(connection))
+                throw new OperationCanceledException("控制连接已关闭");
 
             stopwatch.Stop();
             Log.LogTunnelCreateSuccess(logger, connection.ClientId, httpTunnel.Protocol, tunnelId,
-                stopwatch.Elapsed, httpTunnelCount);
+                stopwatch.Elapsed, connection.HttpTunnelCount);
+            ownedTunnel = null;
             return httpTunnel;
         }
         catch (OperationCanceledException)
@@ -54,7 +68,14 @@ public partial class AgentTunnelFactory(ILogger<AgentTunnelFactory> logger)
         }
         finally
         {
+            if (ownedTunnel is not null)
+            {
+                try { await ownedTunnel.DisposeAsync(); }
+                catch { /* ignored */ }
+            }
+
             _httpTunnelCompletionSources.TryRemove(tunnelId, out _);
+            pendingTunnel.Abandon();
         }
     }
 
@@ -65,8 +86,73 @@ public partial class AgentTunnelFactory(ILogger<AgentTunnelFactory> logger)
 
     public bool SetResult(HttpTunnel httpTunnel)
     {
-        return _httpTunnelCompletionSources.TryRemove(httpTunnel.Id, out var source) &&
-               source.TrySetResult(httpTunnel);
+        if (_httpTunnelCompletionSources.TryRemove(httpTunnel.Id, out var pending) &&
+            pending.TrySetResult(httpTunnel))
+            return true;
+
+        httpTunnel.Dispose();
+        return false;
+    }
+
+    private sealed class PendingHttpTunnel
+    {
+        private readonly object _sync = new();
+        private HttpTunnel? _tunnel;
+        private bool _abandoned;
+        private bool _claimed;
+        private bool _completed;
+
+        public TaskCompletionSource<HttpTunnel> Source { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool TrySetResult(HttpTunnel tunnel)
+        {
+            lock (_sync)
+            {
+                if (_abandoned || _completed || _claimed)
+                {
+                    tunnel.Dispose();
+                    return false;
+                }
+
+                _completed = true;
+                _tunnel = tunnel;
+                if (Source.TrySetResult(tunnel)) return true;
+
+                _tunnel = null;
+            }
+
+            tunnel.Dispose();
+            return false;
+        }
+
+        public bool TryClaim(HttpTunnel tunnel)
+        {
+            lock (_sync)
+            {
+                if (_abandoned || !_completed || !ReferenceEquals(_tunnel, tunnel)) return false;
+
+                _claimed = true;
+                _tunnel = null;
+                return true;
+            }
+        }
+
+        public void Abandon()
+        {
+            HttpTunnel? tunnel;
+            lock (_sync)
+            {
+                if (_abandoned) return;
+
+                _abandoned = true;
+                tunnel = _completed && !_claimed ? _tunnel : null;
+                _tunnel = null;
+                if (!_completed) Source.TrySetCanceled();
+            }
+
+            tunnel?.Dispose();
+        }
     }
 
     private static partial class Log

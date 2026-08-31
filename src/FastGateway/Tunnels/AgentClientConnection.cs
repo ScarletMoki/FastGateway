@@ -1,5 +1,6 @@
 ﻿using System.Buffers;
 using System.Text;
+using FastGateway.Infrastructure;
 
 namespace FastGateway.Tunnels;
 
@@ -11,17 +12,23 @@ public sealed partial class AgentClientConnection : IAsyncDisposable
     private static readonly ReadOnlyMemory<byte> PingLine = "PING\r\n"u8.ToArray();
     private static readonly ReadOnlyMemory<byte> PongLine = "PONG\r\n"u8.ToArray();
     private readonly CancellationTokenSource _disposeTokenSource = new();
+    private readonly CancellationToken _disposedToken;
     private readonly TimeSpan _keepAliveTimeout;
     private readonly Timer? _keepAliveTimer;
     private readonly ILogger _logger;
     private readonly Stream _stream;
+    private readonly object _lifecycleSync = new();
+    private readonly HashSet<HttpTunnel> _httpTunnels = [];
     private int _httpTunnelCount;
+    private int _disposed;
 
     public AgentClientConnection(string clientId, Stream stream, ConnectionConfig config, ILogger logger)
     {
         ClientId = clientId;
         _stream = stream;
         _logger = logger;
+        _disposedToken = _disposeTokenSource.Token;
+        GatewayResourceMetrics.ControlConnectionOpened();
 
         var keepAliveInterval = config.KeepAliveInterval;
         if (config.KeepAlive && keepAliveInterval > TimeSpan.Zero)
@@ -37,33 +44,54 @@ public sealed partial class AgentClientConnection : IAsyncDisposable
 
     public string ClientId { get; }
 
-    public int HttpTunnelCount => _httpTunnelCount;
+    internal CancellationToken DisposedToken => _disposedToken;
+
+    public int HttpTunnelCount => Volatile.Read(ref _httpTunnelCount);
 
     public async ValueTask DisposeAsync()
     {
-        if (!_disposeTokenSource.IsCancellationRequested)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        // 先取消未完成的远端隧道创建，避免控制连接关闭后等待者继续占用请求资源。
+        try
         {
-            // 取消回调会关闭底层 WebSocket/HttpContext；若对端已先断开，这些对象可能已释放，
-            // Cancel 会把 ObjectDisposedException 从回调透传出来，这里吞掉保证清理幂等
-            try
-            {
-                _disposeTokenSource.Cancel();
-            }
-            catch
-            {
-                // ignored
-            }
+            _disposeTokenSource.Cancel();
+        }
+        catch
+        {
+            // ignored
+        }
 
-            _disposeTokenSource.Dispose();
+        _keepAliveTimer?.Dispose();
+        GatewayResourceMetrics.ControlConnectionClosed();
 
-            try
-            {
-                await _stream.DisposeAsync();
-            }
-            catch
-            {
-                // ignored
-            }
+        HttpTunnel[] tunnels;
+        lock (_lifecycleSync)
+        {
+            tunnels = _httpTunnels.ToArray();
+        }
+
+        foreach (var tunnel in tunnels)
+        {
+            try { await tunnel.DisposeAsync(); }
+            catch { /* ignored */ }
+        }
+
+        lock (_lifecycleSync)
+        {
+            _httpTunnels.Clear();
+        }
+
+        _disposeTokenSource.Dispose();
+
+        try
+        {
+            await _stream.DisposeAsync();
+        }
+        catch
+        {
+            // ignored
         }
     }
 
@@ -87,6 +115,9 @@ public sealed partial class AgentClientConnection : IAsyncDisposable
     public async Task CreateHttpTunnelAsync(Guid tunnelId,
         CancellationToken cancellationToken)
     {
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposedToken);
+        cancellationToken = linkedCts.Token;
+
         const int size = 64;
         var tunnelIdLine = $"{tunnelId}\r\n";
 
@@ -97,22 +128,33 @@ public sealed partial class AgentClientConnection : IAsyncDisposable
         await _stream.WriteAsync(buffer, cancellationToken);
     }
 
-    public int IncrementHttpTunnelCount()
+    public bool TryBindHttpTunnel(HttpTunnel tunnel)
     {
-        return Interlocked.Increment(ref _httpTunnelCount);
+        lock (_lifecycleSync)
+        {
+            if (_disposed != 0) return false;
+
+            _httpTunnelCount++;
+            _httpTunnels.Add(tunnel);
+            return true;
+        }
     }
 
-    public int DecrementHttpTunnelCount()
+    public int DecrementHttpTunnelCount(HttpTunnel tunnel)
     {
-        return Interlocked.Decrement(ref _httpTunnelCount);
+        lock (_lifecycleSync)
+        {
+            _httpTunnels.Remove(tunnel);
+            if (_httpTunnelCount <= 0) return 0;
+            return --_httpTunnelCount;
+        }
     }
 
     public async Task WaitForCloseAsync()
     {
         try
         {
-            var cancellationToken = _disposeTokenSource.Token;
-            await HandleConnectionAsync(cancellationToken);
+            await HandleConnectionAsync(_disposedToken);
         }
         catch (Exception)
         {

@@ -35,9 +35,14 @@ public class AgentManagerTunnelMiddleware(
             var httpTunnel = new HttpTunnel(stream, tunnelId, requiredFeature.Protocol, logger);
 
             if (agentTunnelFactory.SetResult(httpTunnel))
-                await httpTunnel.Closed;
+            {
+                try { await httpTunnel.Closed; }
+                finally { await httpTunnel.DisposeAsync(); }
+            }
             else
-                httpTunnel.Dispose();
+            {
+                await httpTunnel.DisposeAsync();
+            }
         }
     }
 }

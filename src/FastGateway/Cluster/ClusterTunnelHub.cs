@@ -45,9 +45,14 @@ public static class ClusterTunnelHub
             var httpTunnel = new HttpTunnel(tunnelStream, tunnelId, feature.Protocol, logger);
 
             if (Tunnels.SetResult(httpTunnel))
-                await httpTunnel.Closed;
+            {
+                try { await httpTunnel.Closed; }
+                finally { await httpTunnel.DisposeAsync(); }
+            }
             else
-                httpTunnel.Dispose();
+            {
+                await httpTunnel.DisposeAsync();
+            }
 
             return;
         }
@@ -73,14 +78,23 @@ public static class ClusterTunnelHub
             var connection = new AgentClientConnection(host, stream, new ConnectionConfig(), logger);
 
             await using var client = new AgentClient(connection, Tunnels, context);
-            if (await Clients.AddAsync(client, default))
+            var added = await Clients.AddAsync(client, CancellationToken.None);
+            try
             {
-                logger.LogInformation("集群隧道节点已注册：{Host}", host);
-
-                await connection.WaitForCloseAsync();
-                await Clients.RemoveAsync(client, default);
-
-                logger.LogInformation("集群隧道节点已断开：{Host}", host);
+                if (added)
+                {
+                    logger.LogInformation("集群隧道节点已注册：{Host}", host);
+                    await connection.WaitForCloseAsync();
+                }
+            }
+            finally
+            {
+                if (added)
+                {
+                    try { await Clients.RemoveAsync(client, CancellationToken.None); }
+                    catch { /* ignored */ }
+                    logger.LogInformation("集群隧道节点已断开：{Host}", host);
+                }
             }
         }
         catch (Exception ex)
