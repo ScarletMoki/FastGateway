@@ -18,8 +18,7 @@ public static class ServerService
 
         server.MapPost(string.Empty, async (ConfigurationService configService, Server server) =>
         {
-            if (string.IsNullOrWhiteSpace(server.Name)) throw new ValidationException("id 不能为空");
-
+            Validate(server);
             configService.AddServer(server);
         }).WithDescription("创建服务").WithDisplayName("创建服务").WithTags("服务");
 
@@ -47,7 +46,9 @@ public static class ServerService
                     Timeout = x.Timeout,
                     EnableRequestFailover = x.EnableRequestFailover,
                     FailoverConnectTimeoutMs = x.FailoverConnectTimeoutMs,
-                    FailoverBudgetMs = x.FailoverBudgetMs
+                    FailoverBudgetMs = x.FailoverBudgetMs,
+                    MaxConcurrentConnections = x.MaxConcurrentConnections,
+                    MaxConcurrentUpgradedConnections = x.MaxConcurrentUpgradedConnections
                 }).ToList();
             })
             .WithDescription("获取服务列表")
@@ -69,7 +70,7 @@ public static class ServerService
 
         server.MapPut("{id}", (ConfigurationService configService, string id, Server server) =>
         {
-            if (string.IsNullOrWhiteSpace(server.Name)) throw new ValidationException("id 不能为空");
+            Validate(server);
 
             server.Id = id;
             configService.UpdateServer(server);
@@ -125,5 +126,20 @@ public static class ServerService
         }).WithDescription("重载服务").WithDisplayName("重载服务").WithTags("服务");
 
         return app;
+    }
+
+    private static void Validate(Server server)
+    {
+        if (string.IsNullOrWhiteSpace(server.Name))
+            throw new ValidationException("名称不能为空");
+
+        ValidateLimit(server.MaxConcurrentConnections, "入站连接上限");
+        ValidateLimit(server.MaxConcurrentUpgradedConnections, "升级连接上限");
+    }
+
+    private static void ValidateLimit(long? value, string name)
+    {
+        if (value is <= 0 or > 1_000_000)
+            throw new ValidationException($"{name}必须在 1-1000000 范围内，留空表示不限制");
     }
 }

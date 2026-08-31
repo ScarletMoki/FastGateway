@@ -69,6 +69,7 @@ public static class StatisticsQueryService
                    COALESCE(SUM(blocked), 0)     AS Blocked,
                    COALESCE(SUM(blocked_403), 0) AS Blocked403,
                    COALESCE(SUM(blocked_429), 0) AS Blocked429,
+                   COALESCE(SUM(blocked_bot), 0) AS BlockedBot,
                    COALESCE(SUM(status_4xx), 0)  AS Status4xx,
                    COALESCE(SUM(status_5xx), 0)  AS Status5xx,
                    COALESCE(SUM(elapsed_sum), 0) AS ElapsedSum
@@ -82,9 +83,10 @@ public static class StatisticsQueryService
                 Blocked = r.GetLong(2),
                 Blocked403 = r.GetLong(3),
                 Blocked429 = r.GetLong(4),
-                Status4xx = r.GetLong(5),
-                Status5xx = r.GetLong(6),
-                ElapsedSum = r.GetLong(7)
+                BlockedBot = r.GetLong(5),
+                Status4xx = r.GetLong(6),
+                Status5xx = r.GetLong(7),
+                ElapsedSum = r.GetLong(8)
             },
             parameters:
             [
@@ -100,6 +102,7 @@ public static class StatisticsQueryService
             result.Blocked = totals.Blocked;
             result.Blocked403 = totals.Blocked403;
             result.Blocked429 = totals.Blocked429;
+            result.BlockedBot = totals.BlockedBot;
             result.Error4xx = totals.Status4xx;
             result.Error5xx = totals.Status5xx;
             if (totals.Requests > 0)
@@ -463,6 +466,7 @@ public static class StatisticsQueryService
         public long Blocked { get; set; }
         public long Blocked403 { get; set; }
         public long Blocked429 { get; set; }
+        public long BlockedBot { get; set; }
         public long Status4xx { get; set; }
         public long Status5xx { get; set; }
         public long ElapsedSum { get; set; }

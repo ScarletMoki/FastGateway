@@ -11,7 +11,8 @@ public enum BlockReason : byte
     Blacklist = 1,
     RateLimit = 2,
     Whitelist = 3,
-    Region = 4
+    Region = 4,
+    BotChallenge = 5
 }
 
 /// <summary>

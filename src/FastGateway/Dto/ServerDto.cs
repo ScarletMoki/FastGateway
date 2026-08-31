@@ -89,4 +89,8 @@ public class ServerDto
     ///     单个请求故障转移总预算（毫秒）
     /// </summary>
     public int FailoverBudgetMs { get; set; } = 500;
+
+    public long? MaxConcurrentConnections { get; set; } = 4096;
+
+    public long? MaxConcurrentUpgradedConnections { get; set; } = 1024;
 }

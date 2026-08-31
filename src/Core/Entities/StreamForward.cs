@@ -62,6 +62,16 @@ public sealed class StreamForward
     public int IdleTimeoutSeconds { get; set; } = 300;
 
     /// <summary>
+    /// 最大 TCP 活动连接数，超过后立即关闭新连接
+    /// </summary>
+    public int MaxTcpConnections { get; set; } = 4096;
+
+    /// <summary>
+    /// 最大 UDP 会话数，超过后丢弃新来源的首包
+    /// </summary>
+    public int MaxUdpSessions { get; set; } = 4096;
+
+    /// <summary>
     /// 启用黑名单（来源 IP 访问控制）
     /// </summary>
     public bool EnableBlacklist { get; set; } = true;

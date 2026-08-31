@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using FastGateway.Infrastructure;
 using FastGateway.Services;
 
 namespace FastGateway.Cluster;
@@ -90,6 +91,7 @@ public static class ClusterHub
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         var connection = new ClusterConnection(nodeId, socket);
+        GatewayResourceMetrics.WebSocketOpened();
 
         // 同一节点重连时顶掉旧连接
         if (Connections.TryRemove(nodeId, out var stale))
@@ -120,6 +122,7 @@ public static class ClusterHub
         finally
         {
             Connections.TryRemove(new KeyValuePair<string, ClusterConnection>(nodeId, connection));
+            GatewayResourceMetrics.WebSocketClosed();
         }
     }
 

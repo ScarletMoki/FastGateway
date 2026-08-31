@@ -10,7 +10,7 @@ namespace FastGateway.Services.Statistics;
 /// </summary>
 public static class StatisticsDb
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private const int RetryIntervalMs = 5_000;
 
     private static readonly string DbPath = Path.Combine(AppContext.BaseDirectory, "data", "stats.db");
@@ -201,6 +201,7 @@ public static class StatisticsDb
                 blocked      INTEGER NOT NULL DEFAULT 0,
                 blocked_403  INTEGER NOT NULL DEFAULT 0,
                 blocked_429  INTEGER NOT NULL DEFAULT 0,
+                blocked_bot  INTEGER NOT NULL DEFAULT 0,
                 status_2xx   INTEGER NOT NULL DEFAULT 0,
                 status_3xx   INTEGER NOT NULL DEFAULT 0,
                 status_4xx   INTEGER NOT NULL DEFAULT 0,
@@ -234,6 +235,12 @@ public static class StatisticsDb
             """);
 
         var version = ExecuteScalarLong(connection, "PRAGMA user_version;");
+        if (version < 2 && ExecuteScalarLong(connection,
+                "SELECT COUNT(*) FROM pragma_table_info('stat_bucket') WHERE name = 'blocked_bot';") == 0)
+        {
+            Execute(connection, "ALTER TABLE stat_bucket ADD COLUMN blocked_bot INTEGER NOT NULL DEFAULT 0;");
+        }
+
         if (version < SchemaVersion) Execute(connection, $"PRAGMA user_version={SchemaVersion};");
     }
 }

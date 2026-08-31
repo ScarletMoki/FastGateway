@@ -30,6 +30,10 @@ public class StreamForwardDto
 
     public int IdleTimeoutSeconds { get; set; }
 
+    public int MaxTcpConnections { get; set; }
+
+    public int MaxUdpSessions { get; set; }
+
     public bool EnableBlacklist { get; set; }
 
     public bool EnableWhitelist { get; set; }

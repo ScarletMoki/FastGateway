@@ -1,3 +1,4 @@
+﻿using FastGateway.Options;
 using FastGateway.Tunnels;
 using System.Diagnostics;
 using System.Net;
@@ -30,12 +31,12 @@ internal sealed class FastGatewayForwarderHttpClientFactory(
 /// <summary>
 ///     普通上游共用一份进程级 <see cref="SocketsHttpHandler"/>，避免 YARP 默认
 ///     每个 cluster 各建一个 handler、连接池按 cluster 数相乘。
-///     协议与超时参数对齐 v2.14.0：明文上游 HTTP/1.1、HTTPS 上游 ALPN 协商 HTTP/2，
-///     且不设 MaxConnectionsPerServer 上限：高峰期上限会把多余请求压进池内排队，
-///     排队请求持续占用入站连接，反而加速 fd 堆积；出站规模交由系统 nofile 约束。
+///     普通上游连接上限与稳定基线一致为 4096，防止 HTTP/1.1 上游在高并发下无限建立连接耗尽 fd。
 /// </summary>
 public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFactory
 {
+    internal static int MaxConnectionsPerServer => FastGatewayOptions.MaxConnectionsPerUpstream;
+
     private static readonly Lazy<SocketsHttpHandler> SharedHandler =
         new(CreateSharedHandler, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -62,7 +63,8 @@ public sealed class StandardForwarderHttpClientFactory : IForwarderHttpClientFac
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
             ResponseDrainTimeout = TimeSpan.FromSeconds(5),
             // 仅对 HTTPS ALPN 协商出的 HTTP/2 生效：单连接约 100 路并发流，打满后另开连接
-            EnableMultipleHttp2Connections = true
+            EnableMultipleHttp2Connections = true,
+            MaxConnectionsPerServer = FastGatewayOptions.MaxConnectionsPerUpstream
         };
     }
 }

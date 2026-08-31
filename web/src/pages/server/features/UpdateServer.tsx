@@ -56,6 +56,8 @@ export default function UpdateServer({
             enableRequestFailover: false,
             failoverConnectTimeoutMs: 150,
             failoverBudgetMs: 500,
+            maxConcurrentConnections: 4096,
+            maxConcurrentUpgradedConnections: 1024,
         }),
         []
     );
@@ -102,6 +104,21 @@ export default function UpdateServer({
                 setTab("limits");
                 return;
             }
+        }
+
+        if (value.maxConcurrentConnections !== null && value.maxConcurrentConnections <= 0) {
+            toast.error("入站连接上限必须大于 0，留空表示不限制");
+            setTab("limits");
+            return;
+        }
+
+        if (
+            value.maxConcurrentUpgradedConnections !== null &&
+            value.maxConcurrentUpgradedConnections <= 0
+        ) {
+            toast.error("升级连接上限必须大于 0，留空表示不限制");
+            setTab("limits");
+            return;
         }
 
         if (value.redirectHttps && !value.isHttps) {
@@ -313,6 +330,54 @@ export default function UpdateServer({
                                             }))
                                         }
                                         placeholder="例如：900"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-2">
+                                    <FieldLabel
+                                        htmlFor="update-server-max-connections"
+                                        label="入站连接上限"
+                                        tooltip="当前网关允许同时保持的 Kestrel 入站连接数。留空表示不限制。"
+                                    />
+                                    <Input
+                                        id="update-server-max-connections"
+                                        type="number"
+                                        value={value.maxConcurrentConnections ?? ""}
+                                        onChange={(e) =>
+                                            setValue((prev) => ({
+                                                ...prev,
+                                                maxConcurrentConnections:
+                                                    e.target.value.trim() === ""
+                                                        ? null
+                                                        : Number(e.target.value),
+                                            }))
+                                        }
+                                        placeholder="例如：4096，留空则不限制"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <FieldLabel
+                                        htmlFor="update-server-max-upgraded-connections"
+                                        label="升级连接上限"
+                                        tooltip="WebSocket 等升级连接的并发上限。留空表示不限制。"
+                                    />
+                                    <Input
+                                        id="update-server-max-upgraded-connections"
+                                        type="number"
+                                        value={value.maxConcurrentUpgradedConnections ?? ""}
+                                        onChange={(e) =>
+                                            setValue((prev) => ({
+                                                ...prev,
+                                                maxConcurrentUpgradedConnections:
+                                                    e.target.value.trim() === ""
+                                                        ? null
+                                                        : Number(e.target.value),
+                                            }))
+                                        }
+                                        placeholder="例如：1024，留空则不限制"
                                     />
                                 </div>
                             </div>

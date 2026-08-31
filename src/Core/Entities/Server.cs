@@ -99,4 +99,19 @@ public sealed class Server
     /// 单个请求故障转移总预算（毫秒）
     /// </summary>
     public int FailoverBudgetMs { get; set; } = 500;
+
+    /// <summary>
+    /// 单个请求最多尝试的故障转移目标数
+    /// </summary>
+    public int FailoverMaxAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Kestrel 入站连接上限，留空表示不限制
+    /// </summary>
+    public long? MaxConcurrentConnections { get; set; } = 4096;
+
+    /// <summary>
+    /// Kestrel 升级连接上限（WebSocket 等），留空表示不限制
+    /// </summary>
+    public long? MaxConcurrentUpgradedConnections { get; set; } = 1024;
 }

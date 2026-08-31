@@ -41,6 +41,8 @@ public static class StreamForwardService
                         LoadBalancing = x.LoadBalancing,
                         ConnectTimeoutMs = x.ConnectTimeoutMs,
                         IdleTimeoutSeconds = x.IdleTimeoutSeconds,
+                        MaxTcpConnections = x.MaxTcpConnections,
+                        MaxUdpSessions = x.MaxUdpSessions,
                         EnableBlacklist = x.EnableBlacklist,
                         EnableWhitelist = x.EnableWhitelist,
                         OnLine = online,
@@ -113,6 +115,12 @@ public static class StreamForwardService
         if (string.IsNullOrWhiteSpace(streamForward.Name)) throw new ValidationException("名称不能为空");
 
         if (streamForward.ListenPort == 0) throw new ValidationException("监听端口不能为空");
+
+        if (streamForward.MaxTcpConnections <= 0)
+            throw new ValidationException("最大 TCP 连接数必须大于 0");
+
+        if (streamForward.MaxUdpSessions <= 0)
+            throw new ValidationException("最大 UDP 会话数必须大于 0");
 
         if (streamForward.UpStreams == null || streamForward.UpStreams.Count == 0)
             throw new ValidationException("至少需要配置一个上游目标");

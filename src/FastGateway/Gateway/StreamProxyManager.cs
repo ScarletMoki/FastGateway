@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using Core.Entities;
 using Core.Entities.Core;
 using FastGateway.Dto;
+using FastGateway.Infrastructure;
 using FastGateway.Services;
 
 namespace FastGateway.Gateway;
@@ -108,13 +109,18 @@ public static class StreamProxyManager
     {
         private const int TcpBufferSize = 64 * 1024;
         private const int UdpBufferSize = 64 * 1024;
+        private const int DefaultMaxTcpConnections = 4096;
+        private const int DefaultMaxUdpSessions = 4096;
 
         private readonly StreamForward _rule;
         private readonly CancellationTokenSource _cts = new();
         private readonly int[] _upstreamConnections;
         private readonly ConcurrentDictionary<SocketAddress, UdpSession> _udpSessions = new();
+        private readonly int _maxTcpConnections;
+        private readonly int _maxUdpSessions;
 
         private int _activeConnections;
+        private int _udpSessionCount;
         private int _roundRobin = -1;
         private Socket? _tcpListener;
         private Socket? _udpListener;
@@ -123,10 +129,16 @@ public static class StreamProxyManager
         {
             _rule = rule;
             _upstreamConnections = new int[rule.UpStreams.Count];
+            _maxTcpConnections = rule.MaxTcpConnections > 0
+                ? rule.MaxTcpConnections
+                : DefaultMaxTcpConnections;
+            _maxUdpSessions = rule.MaxUdpSessions > 0
+                ? rule.MaxUdpSessions
+                : DefaultMaxUdpSessions;
         }
 
         public int ActiveConnections => Volatile.Read(ref _activeConnections);
-        public int UdpSessions => _udpSessions.Count;
+        public int UdpSessions => Volatile.Read(ref _udpSessionCount);
 
         public void Start()
         {
@@ -176,6 +188,15 @@ public static class StreamProxyManager
                     continue;
                 }
 
+                if (Interlocked.Increment(ref _activeConnections) > _maxTcpConnections)
+                {
+                    Interlocked.Decrement(ref _activeConnections);
+                    GatewayResourceMetrics.RecordTcpRejected();
+                    SafeClose(client);
+                    continue;
+                }
+
+                GatewayResourceMetrics.TcpConnectionOpened();
                 _ = HandleTcpClientAsync(client, ct);
             }
         }
@@ -203,8 +224,6 @@ public static class StreamProxyManager
                     return;
                 }
 
-                Interlocked.Increment(ref _activeConnections);
-
                 using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 if (_rule.IdleTimeoutSeconds > 0)
                     connectionCts.CancelAfter(TimeSpan.FromSeconds(_rule.IdleTimeoutSeconds));
@@ -212,7 +231,10 @@ public static class StreamProxyManager
                 var token = connectionCts.Token;
                 var c2u = PumpAsync(client, upstream, connectionCts, token);
                 var u2c = PumpAsync(upstream, client, connectionCts, token);
-                await Task.WhenAll(c2u, u2c);
+                await Task.WhenAny(c2u, u2c);
+                connectionCts.Cancel();
+                try { await Task.WhenAll(c2u, u2c); }
+                catch { /* 取消收尾产生的异常属预期 */ }
             }
             catch
             {
@@ -223,10 +245,11 @@ public static class StreamProxyManager
                 if (upstream != null)
                 {
                     if (upstreamIndex >= 0) Interlocked.Decrement(ref _upstreamConnections[upstreamIndex]);
-                    Interlocked.Decrement(ref _activeConnections);
                     SafeClose(upstream);
                 }
 
+                Interlocked.Decrement(ref _activeConnections);
+                GatewayResourceMetrics.TcpConnectionClosed();
                 SafeClose(client);
             }
         }
@@ -380,11 +403,18 @@ public static class StreamProxyManager
                     _rule.EnableBlacklist, _rule.EnableWhitelist))
                 return null;
 
+            if (Interlocked.Increment(ref _udpSessionCount) > _maxUdpSessions)
+            {
+                Interlocked.Decrement(ref _udpSessionCount);
+                GatewayResourceMetrics.RecordUdpRejected();
+                return null;
+            }
+
             var count = _rule.UpStreams.Count;
             var start = SelectUpstreamIndex(count);
             var up = _rule.UpStreams[start];
 
-            Socket upstream;
+            Socket? upstream = null;
             try
             {
                 var ep = await ResolveEndPointAsync(up.Host, up.Port, ct);
@@ -393,17 +423,22 @@ public static class StreamProxyManager
             }
             catch
             {
+                if (upstream != null) SafeClose(upstream);
+                Interlocked.Decrement(ref _udpSessionCount);
                 return null;
             }
 
             var key = CloneAddress(source);
             var session = new UdpSession(key, upstream);
+            GatewayResourceMetrics.UdpSessionOpened();
 
             if (!_udpSessions.TryAdd(key, session))
             {
-                // 并发竞争：已有会话，丢弃本次创建
+                // 并发竞争：已有会话，丢弃本次创建并释放预留额度
                 session.Dispose();
-                _udpSessions.TryGetValue(source, out session);
+                GatewayResourceMetrics.UdpSessionClosed();
+                Interlocked.Decrement(ref _udpSessionCount);
+                _udpSessions.TryGetValue(key, out session);
                 return session;
             }
 
@@ -470,7 +505,15 @@ public static class StreamProxyManager
 
         private void RemoveUdpSession(UdpSession session)
         {
-            if (_udpSessions.TryRemove(session.ClientAddress, out _)) session.Dispose();
+            if (_udpSessions.TryGetValue(session.ClientAddress, out var current) &&
+                ReferenceEquals(current, session) &&
+                ((ICollection<KeyValuePair<SocketAddress, UdpSession>>)_udpSessions)
+                    .Remove(new KeyValuePair<SocketAddress, UdpSession>(session.ClientAddress, session)))
+            {
+                session.Dispose();
+                GatewayResourceMetrics.UdpSessionClosed();
+                Interlocked.Decrement(ref _udpSessionCount);
+            }
         }
 
         #endregion
@@ -538,8 +581,7 @@ public static class StreamProxyManager
             if (_udpListener != null) SafeClose(_udpListener);
 
             foreach (var kvp in _udpSessions)
-                if (_udpSessions.TryRemove(kvp.Key, out var session))
-                    session.Dispose();
+                RemoveUdpSession(kvp.Value);
 
             try { _cts.Dispose(); } catch { /* ignore */ }
         }

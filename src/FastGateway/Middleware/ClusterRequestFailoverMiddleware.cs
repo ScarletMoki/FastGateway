@@ -1,15 +1,16 @@
 using Core.Entities;
 using Core.Entities.Core;
+using FastGateway.Cluster;
 using FastGateway.Dto;
+using FastGateway.Options;
 using FastGateway.Infrastructure;
 using FastGateway.Services;
 using Microsoft.AspNetCore.Http;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
-using System.Text;
+using System.Net.Http.Headers;
 using Yarp.ReverseProxy;
 using Yarp.ReverseProxy.Forwarder;
 using Yarp.ReverseProxy.Health;
@@ -19,12 +20,11 @@ namespace FastGateway.Middleware;
 
 public sealed class ClusterRequestFailoverMiddleware
 {
-    private static readonly ConcurrentDictionary<int, HttpMessageInvoker> Clients = new();
-
     private readonly RequestDelegate _next;
     private readonly string _serverId;
     private readonly string _gatewayVersion;
     private readonly ILogger<ClusterRequestFailoverMiddleware> _logger;
+    private readonly FailoverHttpClientPool _clientPool;
 
     // 按配置版本缓存的路由表：条目预排序、路径预归一化、transformer 预创建，
     // 避免每请求线性扫描配置 + LINQ 路由重匹配
@@ -34,12 +34,14 @@ public sealed class ClusterRequestFailoverMiddleware
         RequestDelegate next,
         string serverId,
         string gatewayVersion,
-        ILogger<ClusterRequestFailoverMiddleware> logger)
+        ILogger<ClusterRequestFailoverMiddleware> logger,
+        FailoverHttpClientPool clientPool)
     {
         _next = next;
         _serverId = serverId;
         _gatewayVersion = gatewayVersion;
         _logger = logger;
+        _clientPool = clientPool;
     }
 
     public async Task InvokeAsync(
@@ -76,22 +78,26 @@ public sealed class ClusterRequestFailoverMiddleware
             return;
         }
 
+        GatewayResourceMetrics.FailoverRequest();
         Shuffle(candidates);
 
-        var httpClient = GetOrCreateClient(table.ConnectTimeoutMs);
+        var httpClient = _clientPool.GetOrCreate(table.ConnectTimeoutMs);
         var attempts = 0;
+        var maxAttempts = Math.Min(candidates.Length, table.MaxAttempts);
         var startTimestamp = Stopwatch.GetTimestamp();
         ForwarderError lastError = ForwarderError.None;
         Exception? lastException = null;
 
         foreach (var destination in candidates)
         {
-            if (attempts > 0 && Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds > table.BudgetMs)
+            if (attempts >= maxAttempts ||
+                (attempts > 0 && Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds > table.BudgetMs))
             {
                 break;
             }
 
             attempts++;
+            GatewayResourceMetrics.FailoverAttempt(attempts > 1);
             context.Features.Set<IForwarderErrorFeature?>(null);
 
             var error = await httpForwarder.SendAsync(
@@ -137,6 +143,10 @@ public sealed class ClusterRequestFailoverMiddleware
 
             return;
         }
+
+        if (attempts >= maxAttempts ||
+            (attempts > 0 && Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds > table.BudgetMs))
+            GatewayResourceMetrics.FailoverBudgetExhausted();
 
         if (!context.Response.HasStarted)
         {
@@ -246,7 +256,7 @@ public sealed class ClusterRequestFailoverMiddleware
         return "/" + path.Trim().Trim('/');
     }
 
-    private static DestinationState[] GetCandidateDestinations(ClusterState cluster)
+    private static DestinationState[] GetCandidateDestinations(Yarp.ReverseProxy.Model.ClusterState cluster)
     {
         var destinations = cluster.Destinations.Values;
         var result = new List<DestinationState>(cluster.Destinations.Count);
@@ -299,27 +309,31 @@ public sealed class ClusterRequestFailoverMiddleware
             or ForwarderError.RequestCreation;
     }
 
-    private static HttpMessageInvoker GetOrCreateClient(int connectTimeoutMs)
+    private static void RemoveInternalRequestHeaders(HttpRequestHeaders proxyHeaders)
     {
-        return Clients.GetOrAdd(connectTimeoutMs, static timeout =>
-        {
-            var handler = new SocketsHttpHandler
-            {
-                UseProxy = false,
-                AllowAutoRedirect = false,
-                AutomaticDecompression = DecompressionMethods.None,
-                UseCookies = false,
-                EnableMultipleHttp2Connections = true,
-                ActivityHeadersPropagator = new ReverseProxyPropagator(DistributedContextPropagator.Current),
-                RequestHeaderEncodingSelector = (_, _) => Encoding.UTF8,
-                ConnectTimeout = TimeSpan.FromMilliseconds(timeout),
-                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-                ResponseDrainTimeout = TimeSpan.FromSeconds(5)
-            };
+        proxyHeaders.Remove(ClusterRelay.RelayCountHeader);
+        proxyHeaders.Remove(ClusterRelay.RelayTokenHeader);
 
-            return new HttpMessageInvoker(handler, disposeHandler: true);
-        });
+        if (!proxyHeaders.TryGetValues("Cookie", out var cookieValues)) return;
+
+        var retainedCookies = new List<string>();
+        foreach (var cookieHeader in cookieValues)
+        {
+            foreach (var cookie in cookieHeader.Split(';'))
+            {
+                var separator = cookie.IndexOf('=');
+                var name = (separator >= 0 ? cookie[..separator] : cookie).Trim();
+                if (name.Length == 0 || string.Equals(name, BotProtectionService.ClearanceCookieName,
+                        StringComparison.Ordinal))
+                    continue;
+
+                retainedCookies.Add(cookie.Trim());
+            }
+        }
+
+        proxyHeaders.Remove("Cookie");
+        if (retainedCookies.Count > 0)
+            proxyHeaders.TryAddWithoutValidation("Cookie", string.Join("; ", retainedCookies));
     }
 
     private sealed class FailoverRouteTable
@@ -332,6 +346,7 @@ public sealed class ClusterRequestFailoverMiddleware
         public required ForwarderRequestConfig RequestConfig { get; init; }
         public required int ConnectTimeoutMs { get; init; }
         public required int BudgetMs { get; init; }
+        public required int MaxAttempts { get; init; }
 
         public static FailoverRouteTable Build(
             long version,
@@ -394,6 +409,7 @@ public sealed class ClusterRequestFailoverMiddleware
 
             var connectTimeoutMs = server.FailoverConnectTimeoutMs > 0 ? server.FailoverConnectTimeoutMs : 150;
             var budgetMs = server.FailoverBudgetMs >= connectTimeoutMs ? server.FailoverBudgetMs : 500;
+            var maxAttempts = Math.Clamp(server.FailoverMaxAttempts, 1, 3);
             var requestTimeoutSeconds = server.Timeout > 0 ? server.Timeout : 900;
 
             return new FailoverRouteTable
@@ -410,7 +426,8 @@ public sealed class ClusterRequestFailoverMiddleware
                     VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
                 },
                 ConnectTimeoutMs = connectTimeoutMs,
-                BudgetMs = budgetMs
+                BudgetMs = budgetMs,
+                MaxAttempts = maxAttempts
             };
         }
 
@@ -423,7 +440,8 @@ public sealed class ClusterRequestFailoverMiddleware
                 Entries = EmptyEntries,
                 RequestConfig = ForwarderRequestConfig.Empty,
                 ConnectTimeoutMs = 150,
-                BudgetMs = 500
+                BudgetMs = 500,
+                MaxAttempts = 1
             };
         }
 
@@ -465,6 +483,7 @@ public sealed class ClusterRequestFailoverMiddleware
             CancellationToken cancellationToken)
         {
             await base.TransformRequestAsync(httpContext, proxyRequest, destinationPrefix, cancellationToken);
+            RemoveInternalRequestHeaders(proxyRequest.Headers);
 
             var forwardPath = httpContext.Request.Path;
             if (routePath != "/" && httpContext.Request.Path.StartsWithSegments(routePath, out var remaining))

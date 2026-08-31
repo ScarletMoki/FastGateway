@@ -27,6 +27,11 @@ public static class SystemService
             .WithDisplayName("获取网关版本与运行信息")
             .WithTags("系统");
 
+        system.MapGet("resources", GetResources)
+            .WithDescription("获取网关资源运行快照")
+            .WithDisplayName("获取网关资源运行快照")
+            .WithTags("系统");
+
         return app;
     }
 
@@ -40,6 +45,26 @@ public static class SystemService
             Version = version,
             Framework = Environment.Version.ToString(),
             Os = Environment.OSVersion.ToString()
+        };
+    }
+
+    private static SystemResourceDto GetResources()
+    {
+        return new SystemResourceDto
+        {
+            ActiveHttpRequests = GatewayResourceMetrics.ActiveHttpRequests,
+            ActiveControlConnections = GatewayResourceMetrics.ActiveControlConnections,
+            ActiveHttpTunnels = GatewayResourceMetrics.ActiveHttpTunnels,
+            ActiveWebSockets = GatewayResourceMetrics.ActiveWebSockets,
+            ActiveTcpConnections = GatewayResourceMetrics.ActiveTcpConnections,
+            ActiveUdpSessions = GatewayResourceMetrics.ActiveUdpSessions,
+            TcpRejected = GatewayResourceMetrics.TcpRejected,
+            UdpRejected = GatewayResourceMetrics.UdpRejected,
+            FailoverRequests = GatewayResourceMetrics.FailoverRequests,
+            FailoverAttempts = GatewayResourceMetrics.FailoverAttempts,
+            FailoverRetries = GatewayResourceMetrics.FailoverRetries,
+            FailoverExhausted = GatewayResourceMetrics.FailoverExhausted,
+            CheckedAtUtc = DateTime.UtcNow
         };
     }
 

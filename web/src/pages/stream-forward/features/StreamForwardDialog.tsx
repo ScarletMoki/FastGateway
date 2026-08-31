@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -46,6 +46,8 @@ const createDefault = (): StreamForward => ({
     loadBalancing: StreamLoadBalancing.RoundRobin,
     connectTimeoutMs: 5000,
     idleTimeoutSeconds: 300,
+    maxTcpConnections: 4096,
+    maxUdpSessions: 4096,
     enableBlacklist: true,
     enableWhitelist: false,
     onLine: false,
@@ -133,6 +135,12 @@ export default function StreamForwardDialog({
                 setTab("upstream");
                 return;
             }
+        }
+
+        if (value.maxTcpConnections <= 0 || value.maxUdpSessions <= 0) {
+            toast.error("TCP 连接上限和 UDP 会话上限必须大于 0");
+            setTab("advanced");
+            return;
         }
 
         setIsSaving(true);
@@ -343,6 +351,36 @@ export default function StreamForwardDialog({
                                         }))
                                     }
                                     placeholder="例如：300"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="sf-max-tcp">最大 TCP 连接数</Label>
+                                <Input
+                                    id="sf-max-tcp"
+                                    type="number"
+                                    value={value.maxTcpConnections}
+                                    onChange={(e) =>
+                                        setValue((p) => ({
+                                            ...p,
+                                            maxTcpConnections: Number(e.target.value),
+                                        }))
+                                    }
+                                    placeholder="例如：4096"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="sf-max-udp">最大 UDP 会话数</Label>
+                                <Input
+                                    id="sf-max-udp"
+                                    type="number"
+                                    value={value.maxUdpSessions}
+                                    onChange={(e) =>
+                                        setValue((p) => ({
+                                            ...p,
+                                            maxUdpSessions: Number(e.target.value),
+                                        }))
+                                    }
+                                    placeholder="例如：4096"
                                 />
                             </div>
                         </div>
